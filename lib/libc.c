@@ -462,6 +462,56 @@ int32_t strtol(const char *s, char **end, int32_t base)
     return value;
 }
 
+/* Base-10 string conversion without division or multiplication */
+static char* __str_base10(uint32_t value, char* buffer, int* length)
+{
+    if (value == 0) {
+        buffer[0] = '0';
+        *length = 1;
+        return buffer;
+    }
+
+    char temp[12]; /* Max digits for 32-bit: 4,294,967,295 (10 digits) + sign + null */
+    int pos = 0;
+
+    while (value > 0) {
+        uint32_t q, r, t;
+
+        q = (value >> 1) + (value >> 2);
+        q += (q >> 4);
+        q += (q >> 8);
+        q += (q >> 16);
+        q >>= 3;
+        r = value - (((q << 2) + q) << 1);
+        t = ((r + 6) >> 4);
+        q += t;
+        r -= (((t << 2) + t) << 1);
+
+        temp[pos++] = '0' + r;
+        value = q;
+    }
+
+    /* Reverse digits into output buffer */
+    *length = pos;
+    for (int i = 0; i < pos; i++) {
+        buffer[i] = temp[pos - 1 - i];
+    }
+
+    return buffer;
+}
+
+/* Handle signed integers */
+static char* __str_base10_signed(int32_t value, char* buffer, int* length) {
+    if (value < 0) {
+        buffer[0] = '-';
+        __str_base10((uint32_t)(-value), buffer + 1, length);
+        (*length)++;
+        return buffer;
+    } else {
+        return __str_base10((uint32_t)value, buffer, length);
+    }
+}
+
 /* Converts string @s to an integer. */
 int32_t atoi(const char *s)
 {
@@ -501,6 +551,7 @@ void itoa(int32_t i, char *s, int32_t base)
     char *p = s;
     char *q = s;
     uint32_t h;
+    int32_t len;
 
     if (base == 16) { /* Hexadecimal conversion */
         h = (uint32_t) i;
@@ -519,7 +570,9 @@ void itoa(int32_t i, char *s, int32_t base)
             (*q > '9') ? (*p = *q + 39) : (*p = *q);
             *q = c;
         }
-    } else { /* Decimal or other bases */
+    } else if (base == 10) { /* Decimal conversion */
+        __str_base10_signed(i, s, &len);
+    } else { /* Other bases */
         if (i >= 0) {
             do {
                 *q++ = '0' + (i % base);
@@ -822,6 +875,8 @@ static int vsprintf(char **buf, const char *fmt, va_list args)
         i = 0;
         if (num == 0)
             tmp[i++] = '0';
+        else if (base == 10)
+            __str_base10(num, tmp, &i);
         else {
             while (num != 0)
                 tmp[i++] = digits[divide(&num, base)];
