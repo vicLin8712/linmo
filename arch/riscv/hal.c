@@ -308,6 +308,7 @@ void do_trap(uint32_t cause, uint32_t epc)
 /* Enables the machine-level timer interrupt source. */
 void hal_timer_enable(void)
 {
+    mtimecmp_w(mtime_r() + (F_CPU / F_TIMER));
     write_csr(mie, read_csr(mie) | MIE_MTIE);
 }
 
