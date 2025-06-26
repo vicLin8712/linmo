@@ -47,7 +47,7 @@ void task(void)
     }
 
     printf("test signed divide...\n");
-    c = stuff.num | 1LL << 63;
+    c = stuff.num | 1ULL << 63;
     for (i = 0; i < 20; i++) {
         stuff.unum = c / d;
         printf("%x%x / %x%x = %x%x\n", (uint32_t) (c >> 32),
@@ -64,7 +64,7 @@ void task(void)
         stuff.unum <<= 1;
     }
 
-    stuff.unum = 1LL << 63;
+    stuff.unum = 1ULL << 63;
 
     printf("testing right (logical) shifts..\n");
     for (i = 0; i < 64; i++) {
@@ -72,7 +72,7 @@ void task(void)
         stuff.unum >>= 1;
     }
 
-    stuff.unum = 1LL << 63;
+    stuff.unum = 1ULL << 63;
 
     printf("testing right (arithmetic) shifts..\n");
     for (i = 0; i < 64; i++) {
