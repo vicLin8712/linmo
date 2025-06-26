@@ -206,7 +206,7 @@ void semaphore_test_task(void)
 
     /* Test complete - go into low-activity mode */
     while (1)
-        mo_task_delay(10000); /* Sleep for long periods */
+        mo_task_wfi();
 }
 
 /* Example of how to integrate into app_main */
