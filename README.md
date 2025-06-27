@@ -143,6 +143,9 @@ The following table lists the supported C library functions:
 | `fgets()`    | `getline()` | `printf()`  | `sprintf()` | `free()`    |
 | `malloc()`   | `calloc()`  | `realloc()` | `abs()`     |             |
 
+## Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
 ## Reference
 * [Operating System in 1000 Lines](https://operating-system-in-1000-lines.vercel.app/en/)
 * [egos-2000](https://github.com/yhzhang0128/egos-2000)
