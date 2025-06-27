@@ -143,6 +143,10 @@ The following table lists the supported C library functions:
 | `fgets()`    | `getline()` | `printf()`  | `sprintf()` | `free()`    |
 | `malloc()`   | `calloc()`  | `realloc()` | `abs()`     |             |
 
+## License                                                                                                                                             
+`linmo` is available under a permissive MIT-style license.
+Use of this source code is governed by a MIT license that can be found in the [LICENSE](LICENSE) file.
+
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
