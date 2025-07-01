@@ -470,9 +470,6 @@ static char *__str_base10(uint32_t value, char *buffer, int *length)
         *length = 1;
         return buffer;
     }
-
-    /* Max digits for 32-bit: 4,294,967,295 (10 digits) + sign + null */
-    char tmp[12];
     int pos = 0;
 
     while (value > 0) {
@@ -488,15 +485,10 @@ static char *__str_base10(uint32_t value, char *buffer, int *length)
         q += t;
         r -= (((t << 2) + t) << 1);
 
-        tmp[pos++] = '0' + r;
+        buffer[pos++] = '0' + r;
         value = q;
     }
-
-    /* Reverse digits into output buffer */
     *length = pos;
-    for (int i = 0; i < pos; i++) {
-        buffer[i] = tmp[i];
-    }
 
     return buffer;
 }
