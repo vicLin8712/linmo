@@ -495,7 +495,7 @@ static char *__str_base10(uint32_t value, char *buffer, int *length)
     /* Reverse digits into output buffer */
     *length = pos;
     for (int i = 0; i < pos; i++) {
-        buffer[i] = tmp[pos - 1 - i];
+        buffer[i] = tmp[i];
     }
 
     return buffer;
@@ -573,6 +573,14 @@ void itoa(int32_t i, char *s, int32_t base)
         }
     } else if (base == 10) { /* Decimal conversion */
         __str_base10_signed(i, s, &len);
+
+        /* Reverse the string. */
+        q = s + len;
+        for (*q = 0; p <= --q; p++) {
+            c = *p;
+            *p = *q;
+            *q = c;
+        }
     } else { /* Other bases */
         if (i >= 0) {
             do {
