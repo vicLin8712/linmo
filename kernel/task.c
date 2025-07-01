@@ -338,6 +338,12 @@ static bool init_task_stack(tcb_t *tcb, size_t stack_size)
     if (!stack)
         return false;
 
+    /* Validate stack alignment */
+    if ((uintptr_t) stack & 0x3) {
+        free(stack);
+        return false;
+    }
+
     /* Only initialize essential parts to reduce overhead */
     *(uint32_t *) stack = STACK_CANARY;
     *(uint32_t *) ((uintptr_t) stack + stack_size - sizeof(uint32_t)) =
