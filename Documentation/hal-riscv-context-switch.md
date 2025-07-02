@@ -48,20 +48,7 @@ typedef uint32_t jmp_buf[17];
 The `hal_context_save` function captures complete task state including both execution context and processor state.
 The function saves all callee-saved registers as required by the RISC-V ABI,
 plus essential pointers (gp, tp, sp, ra).
-For processor state, it performs sophisticated interrupt state reconstruction:
-
-```c
-/* mstatus reconstruction during timer interrupts */
-csrr t0, mstatus        // Read current mstatus (MIE=0 in trap)
-srli t1, t0, 4          // Shift MPIE (bit 7) to bit 3 position
-andi t1, t1, 8          // Isolate the reconstructed MIE bit
-li   t2, ~8             // Create mask to clear old MIE bit
-and  t0, t0, t2         // Clear the current MIE bit
-or   t0, t0, t1         // Set MIE to pre-trap value (from MPIE)
-sw   t0, 16*4(%0)       // Store in jmp_buf[16]
-```
-
-This ensures that tasks resume with correct interrupt state,
+For processor state, it performs sophisticated interrupt state reconstruction and ensures that tasks resume with correct interrupt state,
 maintaining system responsiveness and preventing interrupt state corruption.
 
 ### 2. Select Next Task

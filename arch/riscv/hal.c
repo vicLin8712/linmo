@@ -444,12 +444,11 @@ int32_t hal_context_save(jmp_buf env)
          * state from MPIE for consistent interrupt context preservation.
          */
         "csrr t0, mstatus\n" /* Read current mstatus (MIE=0 in trap) */
-        "srli t1, t0, 4\n"   /* Shift MPIE (bit 7) to bit 3 pos */
-        "andi t1, t1, 8\n"   /* Isolate the bit (MSTATUS_MIE) */
-        "li   t2, ~8\n"      /* Create mask to clear old MIE bit */
-        "and  t0, t0, t2\n"  /* Clear the current MIE bit */
-        "or   t0, t0, t1\n"  /* Set MIE to its pre-trap value (from MPIE) */
-        "sw   t0, 16*4(%0)\n"
+        "andi t1, t0, ~8\n"  /* Clear MIE bit first */
+        "srli t2, t0, 4\n"   /* Get MPIE bit to position 3 */
+        "andi t2, t2, 8\n"   /* Isolate bit 3 */
+        "or   t1, t1, t2\n"  /* Combine cleared MIE with reconstructed bit */
+        "sw   t1, 16*4(%0)\n"
         /* By convention, the initial call returns 0. */
         "li a0, 0\n"
         :
