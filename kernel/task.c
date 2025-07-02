@@ -102,7 +102,7 @@ static void task_stack_check(void)
     }
 }
 
-/* Delay update with early termination for active tasks */
+/* Updates task delay counters and unblocks tasks when delays expire */
 static list_node_t *delay_update(list_node_t *node, void *arg)
 {
     (void) arg;
@@ -110,11 +110,14 @@ static list_node_t *delay_update(list_node_t *node, void *arg)
         return NULL;
 
     tcb_t *t = node->data;
-    /* Only process blocked tasks with active delays */
-    if (t->state == TASK_BLOCKED && t->delay > 0) {
-        if (--t->delay == 0)
-            t->state = TASK_READY;
-    }
+
+    /* Skip non-blocked tasks (common case) */
+    if (likely(t->state != TASK_BLOCKED))
+        return NULL;
+
+    /* Decrement delay and unblock task if expired */
+    if (t->delay > 0 && --t->delay == 0)
+        t->state = TASK_READY;
     return NULL;
 }
 
