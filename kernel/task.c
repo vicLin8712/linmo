@@ -321,7 +321,7 @@ void yield(void)
     if (unlikely(!kcb || !kcb->task_current || !kcb->task_current->data))
         return;
 
-    /* HAL context switching is used for ppreemptive scheduling. */
+    /* HAL context switching is used for preemptive scheduling. */
     if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
         return;
 
