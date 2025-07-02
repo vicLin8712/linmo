@@ -36,11 +36,8 @@ queue_t *queue_create(int32_t capacity)
  */
 int32_t queue_destroy(queue_t *q)
 {
-    if (!q)
-        return ERR_FAIL;
-
     /* Refuse to destroy a non-empty queue. */
-    if (!queue_is_empty(q))
+    if (!q || !queue_is_empty(q))
         return ERR_FAIL;
 
     free(q->buf);
