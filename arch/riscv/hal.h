@@ -54,27 +54,31 @@ static inline int32_t hal_interrupt_set(int32_t enable)
 #define _di() hal_interrupt_set(0) /* Macro to disable global interrupts. */
 #define _ei() hal_interrupt_set(1) /* Macro to enable global interrupts. */
 
-/* Jump buffer for saving and restoring a task's execution context.
- * It is structured to hold all callee-saved general-purpose registers as
- * specified by the RISC-V ABI, plus essential pointers and CSRs needed to
- * fully capture a task's state. The exact layout is defined by the CONTEXT_*
- * macros in hal.c.
+/* Context buffer for task switching. Contains execution context and space
+ * for processor state management. The standard C library functions use only
+ * the execution context portion, while HAL context switching routines manage
+ * the complete context including processor state.
  *
- * Memory layout (19 x 32-bit words):
+ * Memory layout (17 x 32-bit words):
  * [0-11]:  s0-s11 (callee-saved registers)
  * [12]:    gp (global pointer)
  * [13]:    tp (thread pointer)
  * [14]:    sp (stack pointer)
  * [15]:    ra (return address)
- * [16]:    mcause (for debugging)
- * [17]:    mepc (exception PC)
- * [18]:    mstatus (status register)
+ * [16]:    mstatus (processor state)
  */
-typedef uint32_t jmp_buf[19];
+typedef uint32_t jmp_buf[17];
 
-/* Core context-switching primitives. */
+/* Standard C library context-switching primitives.
+ * These follow standard C semantics and handle only execution context
+ * (elements 0-15 of jmp_buf). Processor state is not managed.
+ */
 int32_t setjmp(jmp_buf env);
 void longjmp(jmp_buf env, int32_t val);
+
+/* HAL context switching routines for complete context management. */
+int32_t hal_context_save(jmp_buf env);
+void hal_context_restore(jmp_buf env, int32_t val);
 void hal_dispatch_init(jmp_buf env);
 
 /* Provides a blocking, busy-wait delay.

@@ -8,15 +8,13 @@
 
 /* Context frame offsets for jmp_buf (as 32-bit word indices).
  *
- * This layout defines the structure of the jmp_buf used by setjmp and longjmp
- * to save and restore a task's context. According to the RISC-V ABI,
- * only the callee-saved registers (s0-s11), stack pointer (sp), global pointer
- * (gp), and thread pointer (tp) need to be preserved across function calls.
- * We also save the return address (ra) to control where execution resumes.
+ * This layout defines the structure of the jmp_buf. The first 16 elements
+ * contain standard execution context as required by the RISC-V ABI for
+ * function calls. Element 16 contains processor state for HAL context
+ * switching routines.
  *
- * This is distinct from the full trap frame saved by the ISR. The jmp_buf is
- * smaller because it only needs to preserve the context from the perspective
- * of a C function call, which is exactly what a context switch is.
+ * Standard C library setjmp/longjmp use only elements 0-15.
+ * HAL context switching routines use all elements 0-16.
  */
 #define CONTEXT_S0 0       /* s0 (x8)  - Callee-saved register */
 #define CONTEXT_S1 1       /* s1 (x9)  - Callee-saved register */
@@ -34,9 +32,7 @@
 #define CONTEXT_TP 13      /* tp (x4)  - Thread Pointer */
 #define CONTEXT_SP 14      /* sp (x2)  - Stack Pointer */
 #define CONTEXT_RA 15      /* ra (x1)  - Return Address / Program Counter */
-#define CONTEXT_MCAUSE 16  /* mcause   - Machine Cause CSR (for debugging) */
-#define CONTEXT_MEPC 17    /* mepc     - Machine Exception PC CSR */
-#define CONTEXT_MSTATUS 18 /* mstatus  - Machine Status CSR */
+#define CONTEXT_MSTATUS 16 /* Machine Status CSR */
 
 /* Defines the size of the full trap frame saved by the ISR in 'boot.c'.
  * The _isr routine saves 32 registers (30 GPRs + mcause + mepc), resulting
@@ -336,7 +332,7 @@ void hal_interrupt_tick(void)
 
 /* Context Switching */
 
-/* Saves the current C execution context into a jmp_buf.
+/* Saves execution context only (elements 0-15).
  * Returns 0 when called directly.
  */
 int32_t setjmp(jmp_buf env)
@@ -363,33 +359,17 @@ int32_t setjmp(jmp_buf env)
         "sw  tp,  13*4(%0)\n"
         "sw  sp,  14*4(%0)\n"
         "sw  ra,  15*4(%0)\n"
-        /* Save CSRs for debug and context switching. The mstatus register is
-         * reconstructed to preserve the pre-trap MIE state, which is essential
-         * for preemptive switching.
-         */
-        "csrr t0, mcause\n"
-        "sw   t0,  16*4(%0)\n"
-        "csrr t0, mepc\n"
-        "sw   t0,  17*4(%0)\n"
-        "csrr t0, mstatus\n" /* Read current mstatus (MIE=0 in trap) */
-        "srli t1, t0, 4\n"   /* Shift MPIE (bit 7) to bit 3 pos */
-        "andi t1, t1, 8\n"   /* Isolate the bit (MSTATUS_MIE) */
-        "li   t2, ~8\n"      /* Create mask to clear old MIE bit */
-        "and  t0, t0, t2\n"  /* Clear the current MIE bit */
-        "or   t0, t0, t1\n"  /* Set MIE to its pre-trap value (from MPIE) */
-        "sw   t0,  18*4(%0)\n"
         /* By convention, the initial call to setjmp returns 0. */
         "li a0, 0\n"
         :
         : "r"(env)
-        : "t0", "t1", "t2", "memory", "a0");
+        : "memory", "a0");
 
-    /* 'return' is for compiler analysis only. */
     return 0;
 }
 
-/* Restores a context saved by 'setjmp'. Never returns to the caller.
- * Execution resumes at the 'setjmp' call site.
+/* Restores execution context only (elements 0-15).
+ * Never returns to the caller. Execution resumes at the 'setjmp' call site.
  * @env : Pointer to the saved context (must be valid).
  * @val : The value to be returned by 'setjmp' (coerced to 1 if 0).
  */
@@ -398,16 +378,11 @@ __attribute__((noreturn)) void longjmp(jmp_buf env, int32_t val)
     if (unlikely(!env))
         hal_panic(); /* Cannot proceed with invalid context */
 
+    /* 'setjmp' must return a non-zero value after 'longjmp'. */
     if (val == 0)
-        val = 1; /* 'setjmp' must return a non-zero value after 'longjmp'. */
+        val = 1;
 
     asm volatile(
-        /* Restore mstatus FIRST. This ensures the interrupt state is correct
-         * before restoring any other registers.
-         */
-        "lw  t0, 18*4(%0)\n"
-        "csrw mstatus, t0\n"
-
         /* Restore all registers from the provided 'jmp_buf'. */
         "lw  s0,   0*4(%0)\n"
         "lw  s1,   1*4(%0)\n"
@@ -426,6 +401,101 @@ __attribute__((noreturn)) void longjmp(jmp_buf env, int32_t val)
         "lw  sp,  14*4(%0)\n"
         "lw  ra,  15*4(%0)\n"
         /* Set the return value (in 'a0') for the 'setjmp' call. */
+        "mv  a0,  %1\n"
+        /* "Return" to the restored 'ra', effectively jumping to new context. */
+        "ret\n"
+        :
+        : "r"(env), "r"(val)
+        : "memory");
+
+    __builtin_unreachable(); /* Tell compiler this point is never reached. */
+}
+
+/* Saves execution context AND processor state.
+ * This is the context switching routine used by the CPU scheduler.
+ * Returns 0 when called directly, non-zero when restored.
+ */
+int32_t hal_context_save(jmp_buf env)
+{
+    if (unlikely(!env))
+        return -1; /* Invalid parameter */
+
+    asm volatile(
+        /* Save all callee-saved registers as required by the RISC-V ABI. */
+        "sw  s0,   0*4(%0)\n"
+        "sw  s1,   1*4(%0)\n"
+        "sw  s2,   2*4(%0)\n"
+        "sw  s3,   3*4(%0)\n"
+        "sw  s4,   4*4(%0)\n"
+        "sw  s5,   5*4(%0)\n"
+        "sw  s6,   6*4(%0)\n"
+        "sw  s7,   7*4(%0)\n"
+        "sw  s8,   8*4(%0)\n"
+        "sw  s9,   9*4(%0)\n"
+        "sw  s10, 10*4(%0)\n"
+        "sw  s11, 11*4(%0)\n"
+        /* Save essential pointers and the return address. */
+        "sw  gp,  12*4(%0)\n"
+        "sw  tp,  13*4(%0)\n"
+        "sw  sp,  14*4(%0)\n"
+        "sw  ra,  15*4(%0)\n"
+        /* Save mstatus with interrupt state reconstruction. During timer
+         * interrupts, mstatus.MIE is cleared, so we reconstruct the pre-trap
+         * state from MPIE for consistent interrupt context preservation.
+         */
+        "csrr t0, mstatus\n" /* Read current mstatus (MIE=0 in trap) */
+        "srli t1, t0, 4\n"   /* Shift MPIE (bit 7) to bit 3 pos */
+        "andi t1, t1, 8\n"   /* Isolate the bit (MSTATUS_MIE) */
+        "li   t2, ~8\n"      /* Create mask to clear old MIE bit */
+        "and  t0, t0, t2\n"  /* Clear the current MIE bit */
+        "or   t0, t0, t1\n"  /* Set MIE to its pre-trap value (from MPIE) */
+        "sw   t0, 16*4(%0)\n"
+        /* By convention, the initial call returns 0. */
+        "li a0, 0\n"
+        :
+        : "r"(env)
+        : "t0", "t1", "t2", "memory", "a0");
+
+    /* 'return' is for compiler analysis only. */
+    return 0;
+}
+
+/* Restores execution context AND processor state.
+ * This is the fast context switching routine used by the scheduler.
+ * Never returns to the caller.
+ * @env : Pointer to the saved context (must be valid).
+ * @val : The value to be returned by 'hal_context_save' (coerced to 1 if 0).
+ */
+__attribute__((noreturn)) void hal_context_restore(jmp_buf env, int32_t val)
+{
+    if (unlikely(!env))
+        hal_panic(); /* Cannot proceed with invalid context */
+
+    if (val == 0)
+        val = 1; /* Must return a non-zero value after restore. */
+
+    asm volatile(
+        /* Restore mstatus FIRST to ensure correct processor state. */
+        "lw  t0, 16*4(%0)\n"
+        "csrw mstatus, t0\n"
+        /* Restore all registers from the provided 'jmp_buf'. */
+        "lw  s0,   0*4(%0)\n"
+        "lw  s1,   1*4(%0)\n"
+        "lw  s2,   2*4(%0)\n"
+        "lw  s3,   3*4(%0)\n"
+        "lw  s4,   4*4(%0)\n"
+        "lw  s5,   5*4(%0)\n"
+        "lw  s6,   6*4(%0)\n"
+        "lw  s7,   7*4(%0)\n"
+        "lw  s8,   8*4(%0)\n"
+        "lw  s9,   9*4(%0)\n"
+        "lw  s10, 10*4(%0)\n"
+        "lw  s11, 11*4(%0)\n"
+        "lw  gp,  12*4(%0)\n"
+        "lw  tp,  13*4(%0)\n"
+        "lw  sp,  14*4(%0)\n"
+        "lw  ra,  15*4(%0)\n"
+        /* Set the return value (in 'a0'). */
         "mv  a0,  %1\n"
         /* "Return" to the restored 'ra', effectively jumping to new context. */
         "ret\n"
@@ -504,16 +574,16 @@ void hal_context_init(jmp_buf *ctx, size_t sp, size_t ss, size_t ra)
     if (unlikely(stack_top <= stack_base || (stack_top & 0xF) != 0))
         hal_panic(); /* Stack configuration error */
 
-    memset(ctx, 0, sizeof(*ctx)); /* Zero the context for predictability. */
+    /* Zero the context for predictability. */
+    memset(ctx, 0, sizeof(*ctx));
 
-    /* Set the two essential registers for a new task:
+    /* Set the essential registers for a new task:
      * - SP is set to the prepared top of the task's stack.
      * - RA is set to the task's entry point.
-     * When this context is first restored via 'longjmp', the 'ret' instruction
-     * will effectively jump to this entry point, starting the task.
+     * - mstatus is set to enable interrupts and ensure machine mode.
      *
-     * The mstatus is also initialized to ensure interrupts are enabled for the
-     * new task.
+     * When this context is first restored, the ret instruction will effectively
+     * jump to this entry point, starting the task.
      */
     (*ctx)[CONTEXT_SP] = (uint32_t) stack_top;
     (*ctx)[CONTEXT_RA] = (uint32_t) ra;

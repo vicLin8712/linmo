@@ -264,9 +264,8 @@ static uint16_t schedule_next_task(void)
 
     /* Try to find the next ready task */
     list_node_t *next_node = find_next_ready_task();
-    if (unlikely(!next_node)) {
+    if (unlikely(!next_node))
         panic(ERR_NO_TASKS);
-    }
 
     /* Update scheduler state */
     kcb->task_current = next_node;
@@ -296,20 +295,24 @@ void dispatch(void)
     if (unlikely(!kcb || !kcb->task_current || !kcb->task_current->data))
         panic(ERR_NO_TASKS);
 
-    /* Return from longjmp: context is restored, continue task execution. */
-    if (setjmp(((tcb_t *) kcb->task_current->data)->context) != 0)
+    /* Save current context using dedicated HAL routine that handles both
+     * execution context and processor state for context switching.
+     * Returns immediately if this is the restore path.
+     */
+    if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
         return;
 
     task_stack_check();
     list_foreach(kcb->tasks, delay_update, NULL);
 
     /* Hook for real-time scheduler - if it selects a task, use it */
-    if (kcb->rt_sched() < 0) {
+    if (kcb->rt_sched() < 0)
         schedule_next_task();
-    }
 
     hal_interrupt_tick();
-    longjmp(((tcb_t *) kcb->task_current->data)->context, 1);
+
+    /* Restore next task context */
+    hal_context_restore(((tcb_t *) kcb->task_current->data)->context, 1);
 }
 
 /* Cooperative context switch */
@@ -318,7 +321,8 @@ void yield(void)
     if (unlikely(!kcb || !kcb->task_current || !kcb->task_current->data))
         return;
 
-    if (setjmp(((tcb_t *) kcb->task_current->data)->context) != 0)
+    /* HAL context switching is used for ppreemptive scheduling. */
+    if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
         return;
 
     task_stack_check();
@@ -328,7 +332,7 @@ void yield(void)
         list_foreach(kcb->tasks, delay_update, NULL);
 
     schedule_next_task();
-    longjmp(((tcb_t *) kcb->task_current->data)->context, 1);
+    hal_context_restore(((tcb_t *) kcb->task_current->data)->context, 1);
 }
 
 /* Stack initialization with minimal overhead */
@@ -418,7 +422,7 @@ int32_t mo_task_spawn(void *task_entry, uint16_t stack_size_req)
 
     CRITICAL_LEAVE();
 
-    /* Initialize execution context outside critical section */
+    /* Initialize execution context outside critical section. */
     hal_context_init(&tcb->context, (size_t) tcb->stack, new_stack_size,
                      (size_t) task_entry);
 
