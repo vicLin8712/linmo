@@ -302,7 +302,10 @@ void dispatch(void)
     if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
         return;
 
-    task_stack_check();
+    /* Do stack check less frequently to reduce overhead */
+    if (unlikely((kcb->ticks & (STACK_CHECK_INTERVAL - 1)) == 0))
+        task_stack_check();
+
     list_foreach(kcb->tasks, delay_update, NULL);
 
     /* Hook for real-time scheduler - if it selects a task, use it */
