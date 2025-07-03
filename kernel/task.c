@@ -243,8 +243,8 @@ static list_node_t *find_next_ready_task(void)
         /* If the counter reaches zero, this task is selected to run. */
         if (counter == 0) {
             /* Reload counter from its base priority for the next cycle. */
-            counter = (task->prio >> 8) & 0xFF;
-            task->prio = (task->prio & 0xFF00) | counter;
+            uint8_t base = task->prio >> 8;
+            task->prio = (task->prio & 0xFF00) | base;
             kcb->last_ready_hint = node; /* Update hint for next time */
             return node;
         }
