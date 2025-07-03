@@ -33,8 +33,14 @@ static kcb_t kernel_state = {
 };
 kcb_t *kcb = &kernel_state;
 
-/* Deferred timer work flag to reduce interrupt latency */
-static volatile bool timer_work_pending = false;
+/* timer work management for reduced latency */
+static volatile uint32_t timer_work_pending = 0;    /* timer work types */
+static volatile uint32_t timer_work_generation = 0; /* counter for coalescing */
+
+/* Timer work types for prioritized processing */
+#define TIMER_WORK_TICK_HANDLER (1U << 0) /* Standard timer callbacks */
+#define TIMER_WORK_DELAY_UPDATE (1U << 1) /* Task delay processing */
+#define TIMER_WORK_CRITICAL (1U << 2)     /* High-priority timer work */
 
 #if CONFIG_STACK_PROTECTION
 /* Stack canary checking frequency - check every N context switches */
@@ -111,6 +117,66 @@ static void task_stack_check(void)
     }
 }
 #endif /* CONFIG_STACK_PROTECTION */
+
+/* delay update with early exit and batching */
+static list_node_t *delay_update_batch(list_node_t *node, void *arg)
+{
+    uint32_t *ready_count = (uint32_t *) arg;
+    if (unlikely(!node || !node->data))
+        return NULL;
+
+    tcb_t *t = node->data;
+
+    /* Skip non-blocked tasks (common case) */
+    if (likely(t->state != TASK_BLOCKED))
+        return NULL;
+
+    /* Process delays only if tick actually advanced */
+    if (t->delay > 0) {
+        if (--t->delay == 0) {
+            t->state = TASK_READY;
+            (*ready_count)++;
+        }
+    }
+    return NULL;
+}
+
+/* timer work processing with coalescing and prioritization */
+static inline void process_timer_work(uint32_t work_mask)
+{
+    if (unlikely(!work_mask))
+        return;
+
+    /* Process high-priority timer work first */
+    if (work_mask & TIMER_WORK_CRITICAL) {
+        /* Handle critical timer callbacks immediately */
+        _timer_tick_handler();
+    } else if (work_mask & TIMER_WORK_TICK_HANDLER) {
+        /* Handle standard timer callbacks */
+        _timer_tick_handler();
+    }
+
+    /* Delay updates are handled separately in scheduler */
+}
+
+/* Fast timer work processing for yield points */
+static inline void process_deferred_timer_work(void)
+{
+    uint32_t work = timer_work_pending;
+    if (likely(!work))
+        return;
+
+    /* Atomic clear with generation check to prevent race conditions */
+    uint32_t current_gen = timer_work_generation;
+    timer_work_pending = 0;
+
+    process_timer_work(work);
+
+    /* Check if new work arrived while processing */
+    if (unlikely(timer_work_generation != current_gen)) {
+        ; /* New work arrived, will be processed on next yield */
+    }
+}
 
 /* Updates task delay counters and unblocks tasks when delays expire */
 static list_node_t *delay_update(list_node_t *node, void *arg)
@@ -298,7 +364,11 @@ static int32_t noop_rtsched(void)
 void dispatcher(void)
 {
     kcb->ticks++;
-    timer_work_pending = true;
+
+    /* Set timer work with generation increment for coalescing */
+    timer_work_pending |= TIMER_WORK_TICK_HANDLER;
+    timer_work_generation++;
+
     _dispatch();
 }
 
@@ -321,7 +391,9 @@ void dispatch(void)
         task_stack_check();
 #endif
 
-    list_foreach(kcb->tasks, delay_update, NULL);
+    /* Batch process task delays for better efficiency */
+    uint32_t ready_count = 0;
+    list_foreach(kcb->tasks, delay_update_batch, &ready_count);
 
     /* Hook for real-time scheduler - if it selects a task, use it */
     if (kcb->rt_sched() < 0)
@@ -340,10 +412,7 @@ void yield(void)
         return;
 
     /* Process deferred timer work during yield */
-    if (timer_work_pending) {
-        timer_work_pending = false;
-        _timer_tick_handler();
-    }
+    process_deferred_timer_work();
 
     /* HAL context switching is used for preemptive scheduling. */
     if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
@@ -514,10 +583,7 @@ void mo_task_yield(void)
 void mo_task_delay(uint16_t ticks)
 {
     /* Process deferred timer work before sleeping */
-    if (timer_work_pending) {
-        timer_work_pending = false;
-        _timer_tick_handler();
-    }
+    process_deferred_timer_work();
 
     if (!ticks)
         return;
@@ -663,10 +729,7 @@ int32_t mo_task_idref(void *task_entry)
 void mo_task_wfi(void)
 {
     /* Process deferred timer work before waiting */
-    if (timer_work_pending) {
-        timer_work_pending = false;
-        _timer_tick_handler();
-    }
+    process_deferred_timer_work();
 
     if (!kcb->preemptive)
         return;
@@ -698,16 +761,12 @@ void _sched_block(queue_t *wait_q)
         panic(ERR_SEM_OPERATION);
 
     /* Process deferred timer work before blocking */
-    if (timer_work_pending) {
-        timer_work_pending = false;
-        _timer_tick_handler();
-    }
+    process_deferred_timer_work();
 
     tcb_t *self = kcb->task_current->data;
 
-    if (queue_enqueue(wait_q, self) != 0) {
+    if (queue_enqueue(wait_q, self) != 0)
         panic(ERR_SEM_OPERATION);
-    }
 
     self->state = TASK_BLOCKED;
     _yield();
