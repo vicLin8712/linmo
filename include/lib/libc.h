@@ -76,9 +76,6 @@ char *strpbrk(const char *s1, const char *s2);
 char *strsep(char **pp, const char *delim);
 char *strtok(char *s, const char *delim);
 char *strtok_r(char *s, const char *delim, char **holder);
-int32_t strtol(const char *s, char **end, int32_t base);
-int32_t atoi(const char *s);
-void itoa(int32_t i, char *s, int32_t base); /* Integer to ASCII conversion */
 
 /* Memory manipulation functions */
 void *memcpy(void *dst, const void *src, uint32_t n);
@@ -86,6 +83,11 @@ void *memmove(void *dst, const void *src, uint32_t n);
 int32_t memcmp(const void *cs, const void *ct, uint32_t n);
 void *memset(void *s, int32_t c, uint32_t n);
 int32_t abs(int32_t n); /* Absolute value */
+
+/* Character classification and conversion functions */
+int32_t strtol(const char *s, char **end, int32_t base);
+int32_t atoi(const char *s);
+void itoa(int32_t i, char *s, int32_t base); /* Integer to ASCII conversion */
 
 /* Random number generation */
 

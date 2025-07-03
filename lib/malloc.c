@@ -1,3 +1,5 @@
+/* libc: memory allocation. */
+
 #include <lib/libc.h>
 #include <sys/task.h>
 #include <types.h>
