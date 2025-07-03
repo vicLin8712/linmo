@@ -205,18 +205,21 @@ static list_node_t *timer_find_node_by_id(uint16_t id)
     return NULL;
 }
 
-/* Timer tick handler with batch processing */
+/* Reduce timer batch processing size for tighter interrupt latency bounds */
+#define TIMER_BATCH_SIZE 4
+
 void _timer_tick_handler(void)
 {
     if (!timer_initialized || list_is_empty(kcb->timer_list))
         return;
 
     uint32_t now = mo_ticks();
-    timer_t *expired_timers[8]; /* Batch process up to 8 timers per tick */
+    timer_t *expired_timers[TIMER_BATCH_SIZE]; /* Smaller batch size */
     int expired_count = 0;
 
-    /* Collect all expired timers in one pass */
-    while (!list_is_empty(kcb->timer_list) && expired_count < 8) {
+    /* Collect expired timers in one pass, limited to batch size */
+    while (!list_is_empty(kcb->timer_list) &&
+           expired_count < TIMER_BATCH_SIZE) {
         timer_t *t = (timer_t *) kcb->timer_list->head->next->data;
 
         if (now >= t->deadline_ticks) {
