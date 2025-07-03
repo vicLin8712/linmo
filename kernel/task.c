@@ -33,6 +33,9 @@ static kcb_t kernel_state = {
 };
 kcb_t *kcb = &kernel_state;
 
+/* Deferred timer work flag to reduce interrupt latency */
+static volatile bool timer_work_pending = false;
+
 /* Magic number written to both ends of a task's stack for corruption detection.
  */
 #define STACK_CANARY 0x33333333U
@@ -288,7 +291,7 @@ static int32_t noop_rtsched(void)
 void dispatcher(void)
 {
     kcb->ticks++;
-    _timer_tick_handler();
+    timer_work_pending = true;
     _dispatch();
 }
 
@@ -326,6 +329,12 @@ void yield(void)
 {
     if (unlikely(!kcb || !kcb->task_current || !kcb->task_current->data))
         return;
+
+    /* Process deferred timer work during yield */
+    if (timer_work_pending) {
+        timer_work_pending = false;
+        _timer_tick_handler();
+    }
 
     /* HAL context switching is used for preemptive scheduling. */
     if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
@@ -491,6 +500,12 @@ void mo_task_yield(void)
 
 void mo_task_delay(uint16_t ticks)
 {
+    /* Process deferred timer work before sleeping */
+    if (timer_work_pending) {
+        timer_work_pending = false;
+        _timer_tick_handler();
+    }
+
     if (!ticks)
         return;
 
@@ -634,6 +649,12 @@ int32_t mo_task_idref(void *task_entry)
 
 void mo_task_wfi(void)
 {
+    /* Process deferred timer work before waiting */
+    if (timer_work_pending) {
+        timer_work_pending = false;
+        _timer_tick_handler();
+    }
+
     if (!kcb->preemptive)
         return;
 
@@ -662,6 +683,12 @@ void _sched_block(queue_t *wait_q)
     if (unlikely(!wait_q || !kcb || !kcb->task_current ||
                  !kcb->task_current->data))
         panic(ERR_SEM_OPERATION);
+
+    /* Process deferred timer work before blocking */
+    if (timer_work_pending) {
+        timer_work_pending = false;
+        _timer_tick_handler();
+    }
 
     tcb_t *self = kcb->task_current->data;
 
