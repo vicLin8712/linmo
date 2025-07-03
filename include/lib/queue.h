@@ -28,7 +28,7 @@ typedef struct {
 } queue_t;
 
 /* Creates and initializes a new queue.
- * @capacity The desired minimum capacity. The actual capacity will be rounded
+ * @capacity: The desired minimum capacity. The actual capacity will be rounded
  *           up to the next power of two.
  * Return A pointer to the newly created queue, or NULL on failure.
  */
@@ -37,7 +37,7 @@ queue_t *queue_create(int32_t capacity);
 /* Destroys a queue and frees its resources.
  * This operation will fail if the queue is not empty, preventing memory
  * leaks of the items contained within the queue.
- * @q The queue to destroy.
+ * @q: The queue to destroy.
  *
  * Return 0 on success, or a negative error code on failure.
  */
