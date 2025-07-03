@@ -9,47 +9,72 @@
 #include <sys/task.h>
 
 #include "private/error.h"
+#include "private/utils.h"
 
 /* Validate mutex pointer and structure integrity */
 static inline bool mutex_is_valid(const mutex_t *m)
 {
-    return (m && m->magic == MUTEX_MAGIC && m->waiters);
+    return m && m->magic == MUTEX_MAGIC && m->waiters &&
+           (m->owner_tid == 0 || m->owner_tid < UINT16_MAX);
 }
 
 /* Validate condition variable pointer and structure integrity */
 static inline bool cond_is_valid(const cond_t *c)
 {
-    return (c && c->magic == COND_MAGIC && c->waiters);
+    return c && c->magic == COND_MAGIC && c->waiters;
 }
 
-/* Find a list node containing a specific data pointer. */
-static list_node_t *find_node_by_data(list_t *list, void *data)
+/* Invalidate mutex during destruction to prevent reuse */
+static inline void mutex_invalidate(mutex_t *m)
 {
-    if (!list || !data)
-        return NULL;
+    if (m) {
+        m->magic = 0xDEADBEEF;
+        m->owner_tid = UINT16_MAX; /* Invalid TID */
+    }
+}
 
-    /* Start from first real node (skip head sentinel) */
-    list_node_t *curr = list->head->next;
-    while (curr && curr != list->tail) {
-        if (curr->data == data)
-            return curr;
+/* Invalidate condition variable during destruction */
+static inline void cond_invalidate(cond_t *c)
+{
+    if (c)
+        c->magic = 0xDEADBEEF;
+}
+
+/* Remove current task from waiter list, avoiding the need to search through
+ * the entire list.
+ */
+static bool remove_self_from_waiters(list_t *waiters)
+{
+    if (unlikely(!waiters || !kcb || !kcb->task_current ||
+                 !kcb->task_current->data))
+        return false;
+
+    tcb_t *self = kcb->task_current->data;
+
+    /* Search for and remove self from waiters list */
+    list_node_t *curr = waiters->head->next;
+    while (curr && curr != waiters->tail) {
+        if (curr->data == self) {
+            list_remove(waiters, curr);
+            free(curr);
+            return true;
+        }
         curr = curr->next;
     }
-    return NULL;
+    return false;
 }
 
-/* Atomic block-on-waitlist operation for mutexes.
- * Must be called within NOSCHED critical section.
- */
+/* Atomic block operation with enhanced error checking */
 static void mutex_block_atomic(list_t *waiters)
 {
-    if (!waiters || !kcb || !kcb->task_current || !kcb->task_current->data)
+    if (unlikely(!waiters || !kcb || !kcb->task_current ||
+                 !kcb->task_current->data))
         panic(ERR_SEM_OPERATION);
 
     tcb_t *self = kcb->task_current->data;
 
     /* Add to waiters list */
-    if (!list_pushback(waiters, self))
+    if (unlikely(!list_pushback(waiters, self)))
         panic(ERR_SEM_OPERATION);
 
     /* Block and yield atomically */
@@ -59,20 +84,20 @@ static void mutex_block_atomic(list_t *waiters)
 
 int32_t mo_mutex_init(mutex_t *m)
 {
-    if (!m)
+    if (unlikely(!m))
         return ERR_FAIL;
 
-    /* Initialize to known state */
+    /* Initialize to known safe state */
     m->waiters = NULL;
     m->owner_tid = 0;
     m->magic = 0;
 
     /* Create waiters list */
     m->waiters = list_create();
-    if (!m->waiters)
+    if (unlikely(!m->waiters))
         return ERR_FAIL;
 
-    /* Mark as valid (last step) */
+    /* Mark as valid atomically (last step) */
     m->owner_tid = 0;
     m->magic = MUTEX_MAGIC;
 
@@ -84,38 +109,39 @@ int32_t mo_mutex_destroy(mutex_t *m)
     if (!m)
         return ERR_OK; /* Destroying NULL is no-op */
 
-    if (!mutex_is_valid(m))
+    if (unlikely(!mutex_is_valid(m)))
         return ERR_FAIL;
 
     NOSCHED_ENTER();
 
     /* Check if any tasks are waiting */
-    if (!list_is_empty(m->waiters)) {
+    if (unlikely(!list_is_empty(m->waiters))) {
         NOSCHED_LEAVE();
         return ERR_TASK_BUSY;
     }
 
     /* Check if mutex is still owned */
-    if (m->owner_tid != 0) {
+    if (unlikely(m->owner_tid != 0)) {
         NOSCHED_LEAVE();
         return ERR_TASK_BUSY;
     }
 
-    /* Invalidate and cleanup */
-    m->magic = 0;
+    /* Invalidate atomically and cleanup */
+    mutex_invalidate(m);
     list_t *waiters = m->waiters;
     m->waiters = NULL;
     m->owner_tid = 0;
 
     NOSCHED_LEAVE();
 
+    /* Clean up resources outside critical section */
     list_destroy(waiters);
     return ERR_OK;
 }
 
 int32_t mo_mutex_lock(mutex_t *m)
 {
-    if (!mutex_is_valid(m))
+    if (unlikely(!mutex_is_valid(m)))
         panic(ERR_SEM_OPERATION); /* Invalid mutex is programming error */
 
     uint16_t self_tid = mo_task_id();
@@ -123,13 +149,13 @@ int32_t mo_mutex_lock(mutex_t *m)
     NOSCHED_ENTER();
 
     /* Non-recursive: reject if caller already owns it */
-    if (m->owner_tid == self_tid) {
+    if (unlikely(m->owner_tid == self_tid)) {
         NOSCHED_LEAVE();
         return ERR_TASK_BUSY;
     }
 
     /* Fast path: mutex is free, acquire immediately */
-    if (m->owner_tid == 0) {
+    if (likely(m->owner_tid == 0)) {
         m->owner_tid = self_tid;
         NOSCHED_LEAVE();
         return ERR_OK;
@@ -145,7 +171,7 @@ int32_t mo_mutex_lock(mutex_t *m)
 
 int32_t mo_mutex_trylock(mutex_t *m)
 {
-    if (!mutex_is_valid(m))
+    if (unlikely(!mutex_is_valid(m)))
         return ERR_FAIL;
 
     uint16_t self_tid = mo_task_id();
@@ -153,7 +179,7 @@ int32_t mo_mutex_trylock(mutex_t *m)
 
     NOSCHED_ENTER();
 
-    if (m->owner_tid == self_tid) {
+    if (unlikely(m->owner_tid == self_tid)) {
         /* Already owned by caller (non-recursive) */
         result = ERR_TASK_BUSY;
     } else if (m->owner_tid == 0) {
@@ -169,19 +195,18 @@ int32_t mo_mutex_trylock(mutex_t *m)
 
 int32_t mo_mutex_timedlock(mutex_t *m, uint32_t ticks)
 {
-    if (!mutex_is_valid(m))
+    if (unlikely(!mutex_is_valid(m)))
         return ERR_FAIL;
 
     if (ticks == 0)
         return mo_mutex_trylock(m); /* Zero timeout = try only */
 
     uint16_t self_tid = mo_task_id();
-    uint32_t deadline = mo_ticks() + ticks;
 
     NOSCHED_ENTER();
 
     /* Non-recursive check */
-    if (m->owner_tid == self_tid) {
+    if (unlikely(m->owner_tid == self_tid)) {
         NOSCHED_LEAVE();
         return ERR_TASK_BUSY;
     }
@@ -193,44 +218,48 @@ int32_t mo_mutex_timedlock(mutex_t *m, uint32_t ticks)
         return ERR_OK;
     }
 
-    /* Must block with timeout */
+    /* Slow path: must block with timeout using delay mechanism */
     tcb_t *self = kcb->task_current->data;
-    if (!list_pushback(m->waiters, self)) {
+    if (unlikely(!list_pushback(m->waiters, self))) {
         NOSCHED_LEAVE();
         panic(ERR_SEM_OPERATION);
     }
+
+    /* Set up timeout using task delay mechanism */
+    self->delay = ticks;
     self->state = TASK_BLOCKED;
 
     NOSCHED_LEAVE();
 
-    /* Wait loop with timeout check */
-    while (self->state == TASK_BLOCKED && mo_ticks() < deadline)
-        mo_task_yield();
+    /* Yield and let the scheduler handle timeout via delay mechanism */
+    mo_task_yield();
 
-    int32_t status;
+    /* Check result after waking up */
+    int32_t result;
+
     NOSCHED_ENTER();
-
     if (self->state == TASK_BLOCKED) {
-        /* Timeout occurred - remove ourselves from wait list */
-        list_node_t *self_node = find_node_by_data(m->waiters, self);
-        if (self_node) {
-            list_remove(m->waiters, self_node);
-            free(self_node);
+        /* We woke up due to timeout, not mutex unlock */
+        if (remove_self_from_waiters(m->waiters)) {
+            self->state = TASK_READY;
+            result = ERR_TIMEOUT;
+        } else {
+            /* Race condition: we were both timed out and unlocked */
+            /* Check if we now own the mutex */
+            result = (m->owner_tid == self_tid) ? ERR_OK : ERR_TIMEOUT;
         }
-        self->state = TASK_READY;
-        status = ERR_TIMEOUT;
     } else {
-        /* Success - we were woken by unlock and granted ownership */
-        status = ERR_OK;
+        /* We were woken by mutex unlock - check ownership */
+        result = (m->owner_tid == self_tid) ? ERR_OK : ERR_FAIL;
     }
-
     NOSCHED_LEAVE();
-    return status;
+
+    return result;
 }
 
 int32_t mo_mutex_unlock(mutex_t *m)
 {
-    if (!mutex_is_valid(m))
+    if (unlikely(!mutex_is_valid(m)))
         return ERR_FAIL;
 
     uint16_t self_tid = mo_task_id();
@@ -238,7 +267,7 @@ int32_t mo_mutex_unlock(mutex_t *m)
     NOSCHED_ENTER();
 
     /* Verify caller owns the mutex */
-    if (m->owner_tid != self_tid) {
+    if (unlikely(m->owner_tid != self_tid)) {
         NOSCHED_LEAVE();
         return ERR_NOT_OWNER;
     }
@@ -250,11 +279,13 @@ int32_t mo_mutex_unlock(mutex_t *m)
     } else {
         /* Transfer ownership to next waiter (FIFO) */
         tcb_t *next_owner = (tcb_t *) list_pop(m->waiters);
-        if (next_owner) {
+        if (likely(next_owner)) {
             /* Validate task state before waking */
-            if (next_owner->state == TASK_BLOCKED) {
+            if (likely(next_owner->state == TASK_BLOCKED)) {
                 m->owner_tid = next_owner->id;
                 next_owner->state = TASK_READY;
+                /* Clear any pending timeout since we're granting ownership */
+                next_owner->delay = 0;
             } else {
                 /* Task state inconsistency */
                 panic(ERR_SEM_OPERATION);
@@ -271,7 +302,7 @@ int32_t mo_mutex_unlock(mutex_t *m)
 
 bool mo_mutex_owned_by_current(mutex_t *m)
 {
-    if (!mutex_is_valid(m))
+    if (unlikely(!mutex_is_valid(m)))
         return false;
 
     return (m->owner_tid == mo_task_id());
@@ -279,7 +310,7 @@ bool mo_mutex_owned_by_current(mutex_t *m)
 
 int32_t mo_mutex_waiting_count(mutex_t *m)
 {
-    if (!mutex_is_valid(m))
+    if (unlikely(!mutex_is_valid(m)))
         return -1;
 
     int32_t count;
@@ -292,19 +323,19 @@ int32_t mo_mutex_waiting_count(mutex_t *m)
 
 int32_t mo_cond_init(cond_t *c)
 {
-    if (!c)
+    if (unlikely(!c))
         return ERR_FAIL;
 
-    /* Initialize to known state */
+    /* Initialize to known safe state */
     c->waiters = NULL;
     c->magic = 0;
 
     /* Create waiters list */
     c->waiters = list_create();
-    if (!c->waiters)
+    if (unlikely(!c->waiters))
         return ERR_FAIL;
 
-    /* Mark as valid */
+    /* Mark as valid atomically */
     c->magic = COND_MAGIC;
     return ERR_OK;
 }
@@ -314,89 +345,45 @@ int32_t mo_cond_destroy(cond_t *c)
     if (!c)
         return ERR_OK; /* Destroying NULL is no-op */
 
-    if (!cond_is_valid(c))
+    if (unlikely(!cond_is_valid(c)))
         return ERR_FAIL;
 
     NOSCHED_ENTER();
 
     /* Check if any tasks are waiting */
-    if (!list_is_empty(c->waiters)) {
+    if (unlikely(!list_is_empty(c->waiters))) {
         NOSCHED_LEAVE();
         return ERR_TASK_BUSY;
     }
 
-    /* Invalidate and cleanup */
-    c->magic = 0;
+    /* Invalidate atomically and cleanup */
+    cond_invalidate(c);
     list_t *waiters = c->waiters;
     c->waiters = NULL;
 
     NOSCHED_LEAVE();
 
+    /* Clean up resources outside critical section */
     list_destroy(waiters);
     return ERR_OK;
 }
 
 int32_t mo_cond_wait(cond_t *c, mutex_t *m)
 {
-    if (!cond_is_valid(c) || !mutex_is_valid(m)) {
+    if (unlikely(!cond_is_valid(c) || !mutex_is_valid(m))) {
         /* Invalid parameters are programming errors */
         panic(ERR_SEM_OPERATION);
     }
 
     /* Verify caller owns the mutex */
-    if (!mo_mutex_owned_by_current(m))
+    if (unlikely(!mo_mutex_owned_by_current(m)))
         return ERR_NOT_OWNER;
 
-    /* Atomically add to wait list and block */
-    NOSCHED_ENTER();
     tcb_t *self = kcb->task_current->data;
-    if (!list_pushback(c->waiters, self)) {
-        NOSCHED_LEAVE();
-        panic(ERR_SEM_OPERATION);
-    }
-    self->state = TASK_BLOCKED;
-    NOSCHED_LEAVE();
-
-    /* Release mutex and yield */
-    int32_t unlock_result = mo_mutex_unlock(m);
-    if (unlock_result != ERR_OK) {
-        /* Failed to unlock - remove from wait list */
-        NOSCHED_ENTER();
-        list_node_t *self_node = find_node_by_data(c->waiters, self);
-        if (self_node) {
-            list_remove(c->waiters, self_node);
-            free(self_node);
-        }
-        self->state = TASK_READY;
-        NOSCHED_LEAVE();
-        return unlock_result;
-    }
-
-    mo_task_yield();
-
-    /* Re-acquire mutex before returning */
-    return mo_mutex_lock(m);
-}
-
-int32_t mo_cond_timedwait(cond_t *c, mutex_t *m, uint32_t ticks)
-{
-    if (!cond_is_valid(c) || !mutex_is_valid(m))
-        panic(ERR_SEM_OPERATION);
-
-    if (!mo_mutex_owned_by_current(m))
-        return ERR_NOT_OWNER;
-
-    if (ticks == 0) {
-        /* Zero timeout - don't wait at all */
-        return ERR_TIMEOUT;
-    }
-
-    uint32_t deadline = mo_ticks() + ticks;
 
     /* Atomically add to wait list */
     NOSCHED_ENTER();
-    tcb_t *self = kcb->task_current->data;
-    if (!list_pushback(c->waiters, self)) {
+    if (unlikely(!list_pushback(c->waiters, self))) {
         NOSCHED_LEAVE();
         panic(ERR_SEM_OPERATION);
     }
@@ -405,35 +392,71 @@ int32_t mo_cond_timedwait(cond_t *c, mutex_t *m, uint32_t ticks)
 
     /* Release mutex */
     int32_t unlock_result = mo_mutex_unlock(m);
-    if (unlock_result != ERR_OK) {
-        /* Failed to unlock - cleanup */
+    if (unlikely(unlock_result != ERR_OK)) {
+        /* Failed to unlock - remove from wait list and restore state */
         NOSCHED_ENTER();
-        list_node_t *self_node = find_node_by_data(c->waiters, self);
-        if (self_node) {
-            list_remove(c->waiters, self_node);
-            free(self_node);
-        }
+        remove_self_from_waiters(c->waiters);
         self->state = TASK_READY;
         NOSCHED_LEAVE();
         return unlock_result;
     }
 
-    /* Wait with timeout */
-    while (self->state == TASK_BLOCKED && mo_ticks() < deadline) {
-        mo_task_yield();
+    /* Yield and wait to be signaled */
+    mo_task_yield();
+
+    /* Re-acquire mutex before returning */
+    return mo_mutex_lock(m);
+}
+
+int32_t mo_cond_timedwait(cond_t *c, mutex_t *m, uint32_t ticks)
+{
+    if (unlikely(!cond_is_valid(c) || !mutex_is_valid(m)))
+        panic(ERR_SEM_OPERATION);
+
+    if (unlikely(!mo_mutex_owned_by_current(m)))
+        return ERR_NOT_OWNER;
+
+    if (ticks == 0) {
+        /* Zero timeout - don't wait at all */
+        return ERR_TIMEOUT;
     }
 
+    tcb_t *self = kcb->task_current->data;
+
+    /* Atomically add to wait list with timeout */
+    NOSCHED_ENTER();
+    if (unlikely(!list_pushback(c->waiters, self))) {
+        NOSCHED_LEAVE();
+        panic(ERR_SEM_OPERATION);
+    }
+    self->delay = ticks;
+    self->state = TASK_BLOCKED;
+    NOSCHED_LEAVE();
+
+    /* Release mutex */
+    int32_t unlock_result = mo_mutex_unlock(m);
+    if (unlikely(unlock_result != ERR_OK)) {
+        /* Failed to unlock - cleanup and restore */
+        NOSCHED_ENTER();
+        remove_self_from_waiters(c->waiters);
+        self->state = TASK_READY;
+        self->delay = 0;
+        NOSCHED_LEAVE();
+        return unlock_result;
+    }
+
+    /* Yield and wait for signal or timeout */
+    mo_task_yield();
+
+    /* Determine why we woke up */
     int32_t wait_status;
     NOSCHED_ENTER();
 
     if (self->state == TASK_BLOCKED) {
-        /* Timeout - remove from wait list */
-        list_node_t *self_node = find_node_by_data(c->waiters, self);
-        if (self_node) {
-            list_remove(c->waiters, self_node);
-            free(self_node);
-        }
+        /* Timeout occurred - remove from wait list */
+        remove_self_from_waiters(c->waiters);
         self->state = TASK_READY;
+        self->delay = 0;
         wait_status = ERR_TIMEOUT;
     } else {
         /* Signaled successfully */
@@ -451,17 +474,19 @@ int32_t mo_cond_timedwait(cond_t *c, mutex_t *m, uint32_t ticks)
 
 int32_t mo_cond_signal(cond_t *c)
 {
-    if (!cond_is_valid(c))
+    if (unlikely(!cond_is_valid(c)))
         return ERR_FAIL;
 
     NOSCHED_ENTER();
 
     if (!list_is_empty(c->waiters)) {
         tcb_t *waiter = (tcb_t *) list_pop(c->waiters);
-        if (waiter) {
+        if (likely(waiter)) {
             /* Validate task state before waking */
-            if (waiter->state == TASK_BLOCKED) {
+            if (likely(waiter->state == TASK_BLOCKED)) {
                 waiter->state = TASK_READY;
+                /* Clear any pending timeout since we're signaling */
+                waiter->delay = 0;
             } else {
                 /* Task state inconsistency */
                 panic(ERR_SEM_OPERATION);
@@ -475,17 +500,20 @@ int32_t mo_cond_signal(cond_t *c)
 
 int32_t mo_cond_broadcast(cond_t *c)
 {
-    if (!cond_is_valid(c))
+    if (unlikely(!cond_is_valid(c)))
         return ERR_FAIL;
 
     NOSCHED_ENTER();
 
+    /* Wake all waiting tasks */
     while (!list_is_empty(c->waiters)) {
         tcb_t *waiter = (tcb_t *) list_pop(c->waiters);
-        if (waiter) {
+        if (likely(waiter)) {
             /* Validate task state before waking */
-            if (waiter->state == TASK_BLOCKED) {
+            if (likely(waiter->state == TASK_BLOCKED)) {
                 waiter->state = TASK_READY;
+                /* Clear any pending timeout since we're broadcasting */
+                waiter->delay = 0;
             } else {
                 /* Task state inconsistency */
                 panic(ERR_SEM_OPERATION);
@@ -499,7 +527,7 @@ int32_t mo_cond_broadcast(cond_t *c)
 
 int32_t mo_cond_waiting_count(cond_t *c)
 {
-    if (!cond_is_valid(c))
+    if (unlikely(!cond_is_valid(c)))
         return -1;
 
     int32_t count;
