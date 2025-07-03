@@ -14,7 +14,8 @@ F_TICK := 100
 
 DEFINES := -DF_CPU=$(F_CLK) \
            -DUSART_BAUD=$(SERIAL_BAUDRATE) \
-           -DF_TIMER=$(F_TICK)
+           -DF_TIMER=$(F_TICK) \
+           -include config.h
 
 ASFLAGS = -march=rv32imzicsr -mabi=ilp32
 CFLAGS += -Wall -Wextra -Wshadow -Wno-unused-parameter -Werror

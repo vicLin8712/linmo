@@ -100,11 +100,6 @@ extern kcb_t *kcb;
 /* Minimum stack size to prevent stack overflow. */
 #define MIN_TASK_STACK_SIZE 256
 
-/* Stack canary checking frequency - check every N context switches to reduce
- * overhead.
- */
-#define STACK_CHECK_INTERVAL 32
-
 /* Task lookup cache size for frequently accessed tasks */
 #define TASK_CACHE_SIZE 4
 

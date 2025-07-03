@@ -36,12 +36,17 @@ kcb_t *kcb = &kernel_state;
 /* Deferred timer work flag to reduce interrupt latency */
 static volatile bool timer_work_pending = false;
 
+#if CONFIG_STACK_PROTECTION
+/* Stack canary checking frequency - check every N context switches */
+#define STACK_CHECK_INTERVAL 32
+
 /* Magic number written to both ends of a task's stack for corruption detection.
  */
 #define STACK_CANARY 0x33333333U
 
 /* Stack check counter for periodic validation (reduces overhead). */
 static uint32_t stack_check_counter = 0;
+#endif /* CONFIG_STACK_PROTECTION */
 
 /* Simple task lookup cache to accelerate frequent ID searches */
 static struct {
@@ -74,6 +79,7 @@ static tcb_t *cache_lookup_task(uint16_t id)
     return NULL;
 }
 
+#if CONFIG_STACK_PROTECTION
 /* Stack integrity check with reduced frequency */
 static void task_stack_check(void)
 {
@@ -104,6 +110,7 @@ static void task_stack_check(void)
         panic(ERR_STACK_CHECK);
     }
 }
+#endif /* CONFIG_STACK_PROTECTION */
 
 /* Updates task delay counters and unblocks tasks when delays expire */
 static list_node_t *delay_update(list_node_t *node, void *arg)
@@ -308,9 +315,11 @@ void dispatch(void)
     if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
         return;
 
+#if CONFIG_STACK_PROTECTION
     /* Do stack check less frequently to reduce overhead */
     if (unlikely((kcb->ticks & (STACK_CHECK_INTERVAL - 1)) == 0))
         task_stack_check();
+#endif
 
     list_foreach(kcb->tasks, delay_update, NULL);
 
@@ -340,7 +349,9 @@ void yield(void)
     if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
         return;
 
+#if CONFIG_STACK_PROTECTION
     task_stack_check();
+#endif
 
     /* In cooperative mode, delays are only processed on an explicit yield. */
     if (!kcb->preemptive)
@@ -363,10 +374,12 @@ static bool init_task_stack(tcb_t *tcb, size_t stack_size)
         return false;
     }
 
+#if CONFIG_STACK_PROTECTION
     /* Only initialize essential parts to reduce overhead */
     *(uint32_t *) stack = STACK_CANARY;
     *(uint32_t *) ((uintptr_t) stack + stack_size - sizeof(uint32_t)) =
         STACK_CANARY;
+#endif
 
     tcb->stack = stack;
     tcb->stack_sz = stack_size;
