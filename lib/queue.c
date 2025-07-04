@@ -8,18 +8,18 @@
 queue_t *queue_create(int32_t capacity)
 {
     /* A capacity of at least 2 is required for an N-1 queue. */
-    if (capacity < 2)
+    if (unlikely(capacity < 2))
         capacity = 2;
 
     if (!ispowerof2(capacity))
         capacity = nextpowerof2(capacity);
 
     queue_t *q = calloc(1, sizeof(queue_t));
-    if (!q)
+    if (unlikely(!q))
         return NULL;
 
     q->buf = malloc(capacity * sizeof(void *));
-    if (!q->buf) {
+    if (unlikely(!q->buf)) {
         free(q);
         return NULL;
     }
@@ -37,7 +37,7 @@ queue_t *queue_create(int32_t capacity)
 int32_t queue_destroy(queue_t *q)
 {
     /* Refuse to destroy a non-empty queue. */
-    if (!queue_is_empty(q))
+    if (unlikely(!queue_is_empty(q)))
         return ERR_FAIL;
 
     free(q->buf);
@@ -48,10 +48,10 @@ int32_t queue_destroy(queue_t *q)
 /* Adds an element to the tail of the queue. */
 int32_t queue_enqueue(queue_t *q, void *ptr)
 {
-    /* Reject null pointer or enqueue into a full queue.
+    /* Reject null queue or enqueue into a full queue.
      * The queue can only store up to 'size - 1' items.
      */
-    if (!q || queue_is_full(q))
+    if (unlikely(!q || queue_is_full(q)))
         return ERR_FAIL;
 
     q->buf[q->tail] = ptr;
@@ -62,7 +62,7 @@ int32_t queue_enqueue(queue_t *q, void *ptr)
 /* Removes an element from the head of the queue. */
 void *queue_dequeue(queue_t *q)
 {
-    if (queue_is_empty(q))
+    if (unlikely(queue_is_empty(q)))
         return NULL;
 
     void *item = q->buf[q->head];
@@ -73,7 +73,7 @@ void *queue_dequeue(queue_t *q)
 /* Returns the element at the head of the queue without removing it. */
 void *queue_peek(const queue_t *q)
 {
-    if (queue_is_empty(q))
+    if (unlikely(queue_is_empty(q)))
         return NULL;
     return q->buf[q->head];
 }
