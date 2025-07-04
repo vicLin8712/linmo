@@ -11,6 +11,7 @@
 #pragma once
 
 #include <lib/libc.h>
+#include "private/utils.h"
 
 /* State is managed entirely by head/tail indices. The capacity is always
  * a power of two to allow for efficient bitwise masking instead of a more
@@ -28,7 +29,7 @@ typedef struct {
 } queue_t;
 
 /* Creates and initializes a new queue.
- * @capacity The desired minimum capacity. The actual capacity will be rounded
+ * @capacity: The desired minimum capacity. The actual capacity will be rounded
  *           up to the next power of two.
  * Return A pointer to the newly created queue, or NULL on failure.
  */
@@ -37,7 +38,7 @@ queue_t *queue_create(int32_t capacity);
 /* Destroys a queue and frees its resources.
  * This operation will fail if the queue is not empty, preventing memory
  * leaks of the items contained within the queue.
- * @q The queue to destroy.
+ * @q: The queue to destroy.
  *
  * Return 0 on success, or a negative error code on failure.
  */
@@ -46,19 +47,27 @@ int32_t queue_destroy(queue_t *q);
 /* Checks if the queue is empty. */
 static inline bool queue_is_empty(const queue_t *q)
 {
-    return q->head == q->tail;
+    return !q || q->head == q->tail;
 }
 
-/* Returns the number of elements currently in the queue. */
+/* Returns the number of elements currently in the queue.
+ *
+ * If the queue pointer is NULL, it is treated as an empty queue
+ * and this function returns 0. This ensures safe behavior even
+ * when invalid pointers are passed.
+ */
 static inline uint32_t queue_count(const queue_t *q)
 {
+    /* Treat NULL queue as empty to prevent undefined behavior */
+    if (unlikely(!q))
+        return 0u;
     return (q->tail - q->head + q->size) & q->mask;
 }
 
 /* Checks if the queue is full. */
 static inline bool queue_is_full(const queue_t *q)
 {
-    return ((q->tail + 1) & q->mask) == q->head;
+    return q && (((q->tail + 1) & q->mask) == q->head);
 }
 
 /* Adds an element to the tail of the queue (FIFO). */

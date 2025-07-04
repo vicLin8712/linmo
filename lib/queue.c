@@ -37,7 +37,7 @@ queue_t *queue_create(int32_t capacity)
 int32_t queue_destroy(queue_t *q)
 {
     /* Refuse to destroy a non-empty queue. */
-    if (!q || !queue_is_empty(q))
+    if (!queue_is_empty(q))
         return ERR_FAIL;
 
     free(q->buf);
@@ -48,8 +48,10 @@ int32_t queue_destroy(queue_t *q)
 /* Adds an element to the tail of the queue. */
 int32_t queue_enqueue(queue_t *q, void *ptr)
 {
-    /* The queue can only store up to 'size - 1' items. */
-    if (queue_is_full(q))
+    /* Reject null pointer or enqueue into a full queue.
+     * The queue can only store up to 'size - 1' items.
+     */
+    if (!q || queue_is_full(q))
         return ERR_FAIL;
 
     q->buf[q->tail] = ptr;

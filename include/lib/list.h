@@ -82,7 +82,7 @@ static inline list_node_t *list_pushback(list_t *list, void *data)
 
     node->data = data;
     node->next = list->tail;
-    list->tail->data = NULL; /* tail sentinel never holds data */
+    list->tail->data = NULL; /* head and tail sentinels never hold data */
     list->head->data = NULL;
 
     /* Insert before tail sentinel */
