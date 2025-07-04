@@ -14,6 +14,7 @@
 #include <sys/timer.h>
 
 #include "private/error.h"
+#include "private/utils.h"
 
 /* Pre-allocated node pool for reduced malloc/free overhead */
 #define TIMER_NODE_POOL_SIZE 16
@@ -79,7 +80,7 @@ static timer_t *cache_lookup_timer(uint16_t id)
 /* Initializes the timer subsystem's data structures. */
 static int32_t timer_subsystem_init(void)
 {
-    if (timer_initialized)
+    if (unlikely(timer_initialized))
         return ERR_OK;
 
     NOSCHED_ENTER();
@@ -91,10 +92,15 @@ static int32_t timer_subsystem_init(void)
     all_timers_list = list_create();
     kcb->timer_list = list_create();
 
-    if (!all_timers_list || !kcb->timer_list) {
-        free(all_timers_list);
-        free(kcb->timer_list);
-        kcb->timer_list = NULL;
+    if (unlikely(!all_timers_list || !kcb->timer_list)) {
+        if (all_timers_list) {
+            list_destroy(all_timers_list);
+            all_timers_list = NULL;
+        }
+        if (kcb->timer_list) {
+            list_destroy(kcb->timer_list);
+            kcb->timer_list = NULL;
+        }
         NOSCHED_LEAVE();
         return ERR_FAIL;
     }
@@ -113,7 +119,7 @@ static int32_t timer_subsystem_init(void)
 /* Fast removal of timer from active list by data pointer */
 static void timer_remove_item_by_data(list_t *list, void *data)
 {
-    if (!list || list_is_empty(list))
+    if (unlikely(!list || list_is_empty(list)))
         return;
 
     list_node_t *prev = list->head;
@@ -135,7 +141,7 @@ static void timer_remove_item_by_data(list_t *list, void *data)
 static int32_t timer_sorted_insert(timer_t *timer)
 {
     list_node_t *new_node = get_timer_node();
-    if (!new_node)
+    if (unlikely(!new_node))
         return ERR_FAIL;
     new_node->data = timer;
 
@@ -171,7 +177,7 @@ static timer_t *timer_find_by_id_fast(uint16_t id)
     if (cached && cached->id == id)
         return cached;
 
-    if (!all_timers_list || list_is_empty(all_timers_list))
+    if (unlikely(!all_timers_list || list_is_empty(all_timers_list)))
         return NULL;
 
     /* Linear search for now - could be optimized to binary search if needed */
@@ -193,7 +199,7 @@ static timer_t *timer_find_by_id_fast(uint16_t id)
 /* Find timer node for removal operations */
 static list_node_t *timer_find_node_by_id(uint16_t id)
 {
-    if (!all_timers_list)
+    if (unlikely(!all_timers_list))
         return NULL;
 
     list_node_t *node = all_timers_list->head->next;
@@ -210,7 +216,8 @@ static list_node_t *timer_find_node_by_id(uint16_t id)
 
 void _timer_tick_handler(void)
 {
-    if (!timer_initialized || list_is_empty(kcb->timer_list))
+    if (unlikely(!timer_initialized || !kcb->timer_list ||
+                 list_is_empty(kcb->timer_list)))
         return;
 
     uint32_t now = mo_ticks();
@@ -236,7 +243,7 @@ void _timer_tick_handler(void)
         timer_t *t = expired_timers[i];
 
         /* Execute callback */
-        if (t->callback)
+        if (likely(t->callback))
             t->callback(t->arg);
 
         /* Handle auto-reload timers */
@@ -253,7 +260,7 @@ void _timer_tick_handler(void)
 static int32_t timer_insert_sorted_by_id(timer_t *timer)
 {
     list_node_t *new_node = get_timer_node();
-    if (!new_node)
+    if (unlikely(!new_node))
         return ERR_FAIL;
     new_node->data = timer;
 
@@ -278,13 +285,13 @@ int32_t mo_timer_create(void *(*callback)(void *arg),
 {
     static uint16_t next_id = 0x6000;
 
-    if (!callback || period_ms == 0)
+    if (unlikely(!callback || !period_ms))
         return ERR_FAIL;
-    if (timer_subsystem_init() != ERR_OK)
+    if (unlikely(timer_subsystem_init() != ERR_OK))
         return ERR_FAIL;
 
     timer_t *t = malloc(sizeof(timer_t));
-    if (!t)
+    if (unlikely(!t))
         return ERR_FAIL;
 
     NOSCHED_ENTER();
@@ -296,9 +303,10 @@ int32_t mo_timer_create(void *(*callback)(void *arg),
     t->period_ms = period_ms;
     t->deadline_ticks = 0;
     t->mode = TIMER_DISABLED;
+    t->_reserved = 0;
 
     /* Insert into sorted all_timers_list */
-    if (timer_insert_sorted_by_id(t) != ERR_OK) {
+    if (unlikely(timer_insert_sorted_by_id(t) != ERR_OK)) {
         NOSCHED_LEAVE();
         free(t);
         return ERR_FAIL;
@@ -313,13 +321,13 @@ int32_t mo_timer_create(void *(*callback)(void *arg),
 
 int32_t mo_timer_destroy(uint16_t id)
 {
-    if (!timer_initialized)
+    if (unlikely(!timer_initialized))
         return ERR_FAIL;
 
     NOSCHED_ENTER();
 
     list_node_t *node = timer_find_node_by_id(id);
-    if (!node) {
+    if (unlikely(!node)) {
         NOSCHED_LEAVE();
         return ERR_FAIL;
     }
@@ -349,15 +357,15 @@ int32_t mo_timer_destroy(uint16_t id)
 
 int32_t mo_timer_start(uint16_t id, uint8_t mode)
 {
-    if (mode != TIMER_ONESHOT && mode != TIMER_AUTORELOAD)
+    if (unlikely(mode != TIMER_ONESHOT && mode != TIMER_AUTORELOAD))
         return ERR_FAIL;
-    if (!timer_initialized)
+    if (unlikely(!timer_initialized))
         return ERR_FAIL;
 
     NOSCHED_ENTER();
 
     timer_t *t = timer_find_by_id_fast(id);
-    if (!t) {
+    if (unlikely(!t)) {
         NOSCHED_LEAVE();
         return ERR_FAIL;
     }
@@ -370,7 +378,7 @@ int32_t mo_timer_start(uint16_t id, uint8_t mode)
     t->mode = mode;
     t->deadline_ticks = mo_ticks() + MS_TO_TICKS(t->period_ms);
 
-    if (timer_sorted_insert(t) != ERR_OK) {
+    if (unlikely(timer_sorted_insert(t) != ERR_OK)) {
         t->mode = TIMER_DISABLED;
         NOSCHED_LEAVE();
         return ERR_FAIL;
@@ -382,13 +390,13 @@ int32_t mo_timer_start(uint16_t id, uint8_t mode)
 
 int32_t mo_timer_cancel(uint16_t id)
 {
-    if (!timer_initialized)
+    if (unlikely(!timer_initialized))
         return ERR_FAIL;
 
     NOSCHED_ENTER();
 
     timer_t *t = timer_find_by_id_fast(id);
-    if (!t || t->mode == TIMER_DISABLED) {
+    if (unlikely(!t || t->mode == TIMER_DISABLED)) {
         NOSCHED_LEAVE();
         return ERR_FAIL;
     }
