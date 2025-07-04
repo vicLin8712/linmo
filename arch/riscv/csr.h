@@ -1,7 +1,7 @@
 /* RISC-V CSR (Control and Status Register) bit definitions.
  *
  * This file centralizes all bitfield definitions for RISC-V CSRs used by the
- * HAL.
+ * HAL. All definitions follow the RISC-V privileged specification.
  */
 
 #pragma once
@@ -17,7 +17,7 @@
 #define MSTATUS_MPIE (1U << 7)
 
 /* Previous Privilege Mode bits: Indicates the privilege mode before a trap.
- * 3: Machine Mode, 2: Supervisor Mode, 1: User Mode, 0: Reserved.
+ * 3: Machine Mode, 2: Reserved, 1: Supervisor Mode, 0: User Mode.
  */
 #define MSTATUS_MPP_SHIFT 11
 #define MSTATUS_MPP_MASK (3U << MSTATUS_MPP_SHIFT)
@@ -27,7 +27,7 @@
 
 /* Utility macros for mstatus manipulation */
 #define MSTATUS_GET_MPP(m) (((m) & MSTATUS_MPP_MASK) >> MSTATUS_MPP_SHIFT)
-#define MSTATUS_SET_MPP(ms, mode) \
+#define MSTATUS_SET_MPP(m, mode) \
     (((m) & ~MSTATUS_MPP_MASK) | ((mode) << MSTATUS_MPP_SHIFT))
 
 /* mie Register (Machine Interrupt Enable Register) */

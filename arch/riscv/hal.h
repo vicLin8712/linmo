@@ -2,19 +2,14 @@
 
 #include <types.h>
 
-/* Symbols from the linker script, defining memory boundaries. */
-/* From linker script */
-extern uint32_t _stack_start, _stack_end; /* Start/end of the STACK memory. */
-extern uint32_t _heap_start, _heap_end;   /* Start/end of the HEAP memory. */
-extern uint32_t _heap_size;               /* Size of HEAP memory. */
-/* Start address for the contents initialization of the .data section. */
-extern uint32_t _sidata;
-/* Start/end address for the .data section. */
-extern uint32_t _sdata, _edata;
-/* Start/end address for the .bss section. */
-extern uint32_t _sbss, _ebss;
-/* Start address of the heap memory. */
-extern uint32_t _end;
+/* Symbols from the linker script, defining memory boundaries */
+extern uint32_t _stack_start, _stack_end; /* Start/end of the STACK memory */
+extern uint32_t _heap_start, _heap_end;   /* Start/end of the HEAP memory */
+extern uint32_t _heap_size;               /* Size of HEAP memory */
+extern uint32_t _sidata;        /* Start address for .data initialization */
+extern uint32_t _sdata, _edata; /* Start/end address for .data section */
+extern uint32_t _sbss, _ebss;   /* Start/end address for .bss section */
+extern uint32_t _end;           /* End of kernel image */
 
 /* Read a RISC-V Control and Status Register (CSR).
  * @reg : The symbolic name of the CSR (e.g., mstatus).
@@ -51,8 +46,8 @@ static inline int32_t hal_interrupt_set(int32_t enable)
 }
 
 /* Convenience macros for interrupt control */
-#define _di() hal_interrupt_set(0) /* Macro to disable global interrupts. */
-#define _ei() hal_interrupt_set(1) /* Macro to enable global interrupts. */
+#define _di() hal_interrupt_set(0) /* Disable global interrupts */
+#define _ei() hal_interrupt_set(1) /* Enable global interrupts */
 
 /* Context buffer for task switching. Contains execution context and space
  * for processor state management. The standard C library functions use only
@@ -76,7 +71,7 @@ typedef uint32_t jmp_buf[17];
 int32_t setjmp(jmp_buf env);
 void longjmp(jmp_buf env, int32_t val);
 
-/* HAL context switching routines for complete context management. */
+/* HAL context switching routines for complete context management */
 int32_t hal_context_save(jmp_buf env);
 void hal_context_restore(jmp_buf env, int32_t val);
 void hal_dispatch_init(jmp_buf env);
@@ -93,7 +88,7 @@ void delay_ms(uint32_t msec);
  */
 uint64_t _read_us(void);
 
-/* Hardware Abstraction Layer (HAL) initialization and control functions. */
+/* Hardware Abstraction Layer (HAL) initialization and control functions */
 void hal_hardware_init(void);
 void hal_timer_enable(void);
 void hal_timer_disable(void);
@@ -107,11 +102,11 @@ void hal_interrupt_tick(void);
  */
 void hal_context_init(jmp_buf *ctx, size_t sp, size_t ss, size_t ra);
 
-/* Halts the CPU in an unrecoverable error state, shutting down if possible. */
+/* Halts the CPU in an unrecoverable error state, shutting down if possible */
 void hal_panic(void);
 
-/* Puts the CPU into a low-power wait-for-interrupt state. */
+/* Puts the CPU into a low-power wait-for-interrupt state */
 void hal_cpu_idle(void);
 
-/* Default stack size for new tasks if not otherwise specified. */
+/* Default stack size for new tasks if not otherwise specified */
 #define DEFAULT_STACK_SIZE 4096

@@ -40,14 +40,13 @@ typedef long long int64_t;
 #define UINT64_MAX 18446744073709551615ULL
 #endif
 
-/* pointer-sized types */
-typedef unsigned int uintptr_t; /* address as unsigned value */
-typedef int intptr_t;           /* address as signed value   */
+/* Pointer-sized types */
+typedef unsigned int uintptr_t; /* Address as unsigned value */
+typedef int intptr_t;           /* Address as signed value */
 
-/* convenient aliases */
-typedef int ptrdiff_t;       /* result of pointer subtractions */
-typedef unsigned int size_t; /* object sizes */
-typedef signed int ssize_t;  /* signed size */
+/* Convenient aliases */
+typedef int ptrdiff_t;       /* Result of pointer subtractions */
+typedef unsigned int size_t; /* Object sizes */
 typedef signed int ssize_t;  /* Signed size for error returns */
 
 /* Compile-time assertions */

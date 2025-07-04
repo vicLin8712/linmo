@@ -26,19 +26,19 @@ void hal_panic(void);
 __attribute__((naked, section(".text.prologue"))) void _entry(void)
 {
     asm volatile(
-        /* Initialize Global Pointer (gp) and Stack Pointer (sp). */
+        /* Initialize Global Pointer (gp) and Stack Pointer (sp) */
         "la     gp, _gp\n"
         "la     sp, _stack\n"
 
         /* Initialize Thread Pointer (tp). The ABI requires tp to point to
          * a 64-byte aligned memory region for thread-local storage. Here, we
-         * point it to the end of the kernel image.
+         * point it to the end of the kernel image and ensure proper alignment.
          */
         "la     tp, _end\n"
         "addi   tp, tp, 63\n"
         "andi   tp, tp, -64\n" /* Align to 64 bytes */
 
-        /* Clear the .bss section to zero. */
+        /* Clear the .bss section to zero */
         "la     a0, _sbss\n"
         "la     a1, _ebss\n"
         "bgeu   a0, a1, .Lbss_done\n"
@@ -48,25 +48,25 @@ __attribute__((naked, section(".text.prologue"))) void _entry(void)
         "bltu   a0, a1, .Lbss_clear_loop\n"
         ".Lbss_done:\n"
 
-        /* Configure machine status register (mstatus).
-         * - Set Previous Privilege Mode (MPP) to Machine. This ensures that an
-         *   'mret' instruction returns to machine mode.
-         * - Interrupts are initially disabled (MIE bit is 0).
+        /* Configure machine status register (mstatus)
+         * - Set Previous Privilege Mode (MPP) to Machine mode. This ensures
+         *   that an 'mret' instruction returns to machine mode.
+         * - Machine Interrupt Enable (MIE) is initially disabled.
          */
         "li     t0, %0\n"
         "csrw   mstatus, t0\n"
 
-        /* Disable all interrupts and clear any pending flags. */
+        /* Disable all interrupts and clear any pending flags */
         "csrw   mie, zero\n"     /* Machine Interrupt Enable */
         "csrw   mip, zero\n"     /* Machine Interrupt Pending */
         "csrw   mideleg, zero\n" /* No interrupt delegation to S-mode */
         "csrw   medeleg, zero\n" /* No exception delegation to S-mode */
 
-        /* Park secondary harts (cores). */
+        /* Park secondary harts (cores) - only hart 0 continues */
         "csrr   t0, mhartid\n"
         "bnez   t0, .Lpark_hart\n"
 
-        /* Set the machine trap vector (mtvec) to point to our ISR. */
+        /* Set the machine trap vector (mtvec) to point to our ISR */
         "la     t0, _isr\n"
         "csrw   mtvec, t0\n"
 
@@ -78,10 +78,10 @@ __attribute__((naked, section(".text.prologue"))) void _entry(void)
         "li     t0, %1\n"
         "csrw   mie, t0\n"
 
-        /* Jump to the C-level main function. */
+        /* Jump to the C-level main function */
         "call   main\n"
 
-        /* If main() ever returns, it is a fatal error. */
+        /* If main() ever returns, it is a fatal error */
         "call   hal_panic\n"
 
         ".Lpark_hart:\n"
@@ -108,7 +108,7 @@ __attribute__((naked, section(".text.prologue"))) void _entry(void)
 __attribute__((naked, aligned(4))) void _isr(void)
 {
     asm volatile(
-        /* Allocate stack frame for full context save. */
+        /* Allocate stack frame for full context save */
         "addi   sp, sp, -%0\n"
 
         /* Save all general-purpose registers except x0 (zero) and x2 (sp).
@@ -153,16 +153,16 @@ __attribute__((naked, aligned(4))) void _isr(void)
         "sw  t5,  28*4(sp)\n"
         "sw  t6,  29*4(sp)\n"
 
-        /* Save trap-related CSRs and prepare arguments for do_trap. */
+        /* Save trap-related CSRs and prepare arguments for do_trap */
         "csrr   a0, mcause\n" /* Arg 1: cause */
         "csrr   a1, mepc\n"   /* Arg 2: epc */
         "sw     a0,  30*4(sp)\n"
         "sw     a1,  31*4(sp)\n"
 
-        /* Call the high-level C trap handler. */
+        /* Call the high-level C trap handler */
         "call   do_trap\n"
 
-        /* Restore context. mepc might have been changed by the handler. */
+        /* Restore context. mepc might have been modified by the handler */
         "lw     a1,  31*4(sp)\n"
         "csrw   mepc, a1\n"
         "lw  ra,   0*4(sp)\n"
@@ -196,10 +196,10 @@ __attribute__((naked, aligned(4))) void _isr(void)
         "lw  t5,  28*4(sp)\n"
         "lw  t6,  29*4(sp)\n"
 
-        /* Deallocate stack frame. */
+        /* Deallocate stack frame */
         "addi   sp, sp, %0\n"
 
-        /* Return from trap. */
+        /* Return from trap */
         "mret\n"
         : /* no outputs */
         : "i"(ISR_CONTEXT_SIZE)

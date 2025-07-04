@@ -48,15 +48,23 @@
 #define NS16550A_UART0_BASE 0x10000000U
 #define NS16550A_UART0_REG(off) \
     (*(volatile uint8_t *) (NS16550A_UART0_BASE + (off)))
-#define NS16550A_LSR 0x05 /* Line Status Register: provides status flags. */
-/* Transmit Holding Register Empty: if set, ready to send. */
+
+/* UART register offsets */
+#define NS16550A_THR 0x00 /* Transmit Holding Register (write-only) */
+#define NS16550A_RBR 0x00 /* Receive Buffer Register (read-only) */
+#define NS16550A_DLL 0x00 /* Divisor Latch LSB (when DLAB=1) */
+#define NS16550A_DLM 0x01 /* Divisor Latch MSB (when DLAB=1) */
+#define NS16550A_LCR 0x03 /* Line Control Register */
+#define NS16550A_LSR 0x05 /* Line Status Register */
+
+/* Line Status Register bits */
+#define NS16550A_LSR_DR 0x01 /* Data Ready: byte received */
+/* Transmit Holding Register Empty: ready to send */
 #define NS16550A_LSR_THRE 0x20
-/* Transmit Holding Register (write-only): for sending data. */
-#define NS16550A_THR 0x00
-/* Data Ready: if set, a byte has been received. */
-#define NS16550A_LSR_DR 0x01
-/* Receive Buffer Register (read-only): for receiving data. */
-#define NS16550A_RBR 0x00
+
+/* Line Control Register bits */
+#define NS16550A_LCR_8BIT 0x03 /* 8-bit chars, no parity, 1 stop bit (8N1) */
+#define NS16550A_LCR_DLAB 0x80 /* Divisor Latch Access Bit */
 
 /* CLINT (Core Local Interrupter) - Provides machine-level timer and software
  * interrupts.
@@ -64,7 +72,8 @@
 #define CLINT_BASE 0x02000000U
 #define MTIMECMP (*(volatile uint64_t *) (CLINT_BASE + 0x4000u))
 #define MTIME (*(volatile uint64_t *) (CLINT_BASE + 0xBFF8u))
-/* Accessors for 32-bit halves of the 64-bit CLINT registers. */
+
+/* Accessors for 32-bit halves of the 64-bit CLINT registers */
 #define MTIMECMP_L (*(volatile uint32_t *) (CLINT_BASE + 0x4000u))
 #define MTIMECMP_H (*(volatile uint32_t *) (CLINT_BASE + 0x4004u))
 #define MTIME_L (*(volatile uint32_t *) (CLINT_BASE + 0xBFF8u))
@@ -80,7 +89,7 @@ static int __putchar(int value)
      */
     volatile uint32_t timeout = 0x100000; /* Reasonable timeout limit */
     while (!(NS16550A_UART0_REG(NS16550A_LSR) & NS16550A_LSR_THRE)) {
-        if (--timeout == 0)
+        if (unlikely(--timeout == 0))
             return 0; /* Hardware timeout */
     }
 
@@ -91,7 +100,7 @@ static int __putchar(int value)
 /* Backend for polling stdin, checks if a character has been received. */
 static int __kbhit(void)
 {
-    /* Check the Data Ready (DR) bit in the Line Status Register. */
+    /* Check the Data Ready (DR) bit in the Line Status Register */
     return (NS16550A_UART0_REG(NS16550A_LSR) & NS16550A_LSR_DR) ? 1 : 0;
 }
 
@@ -106,7 +115,7 @@ static int __getchar(void)
     return (int) NS16550A_UART0_REG(NS16550A_RBR);
 }
 
-/* Helper macro to combine high and low 32-bit words into a 64-bit value. */
+/* Helper macro to combine high and low 32-bit words into a 64-bit value */
 #define CT64(hi, lo) (((uint64_t) (hi) << 32) | (lo))
 
 /* Safely read the 64-bit 'mtime' register on a 32-bit RV32 architecture.
@@ -124,7 +133,7 @@ static inline uint64_t mtime_r(void)
     return CT64(hi, lo);
 }
 
-/* Safely read the 64-bit 'mtimecmp' register. */
+/* Safely read the 64-bit 'mtimecmp' register */
 static inline uint64_t mtimecmp_r(void)
 {
     uint32_t hi, lo;
@@ -141,11 +150,11 @@ static inline uint64_t mtimecmp_r(void)
  * To prevent this, we first set the low word to an impassable value (all 1s),
  * then set the high word, and finally set the correct low word. This ensures
  * the full 64-bit compare value becomes active atomically from the timer's
- * view.
+ * perspective.
  */
 static inline void mtimecmp_w(uint64_t val)
 {
-    /* Disable interrupts during the critical section to ensure atomicity */
+    /* Disable timer interrupts during the critical section */
     uint32_t old_mie = read_csr(mie);
     write_csr(mie, old_mie & ~MIE_MTIE);
 
@@ -157,7 +166,7 @@ static inline void mtimecmp_w(uint64_t val)
     write_csr(mie, old_mie);
 }
 
-/* Returns number of microseconds since boot by reading the 'mtime' counter. */
+/* Returns number of microseconds since boot by reading the 'mtime' counter */
 uint64_t _read_us(void)
 {
     /* Ensure F_CPU is defined and non-zero to prevent division by zero */
@@ -184,63 +193,54 @@ void delay_ms(uint32_t msec)
 
     uint64_t end_time = mtime_r() + ((uint64_t) msec * (F_CPU / 1000));
     while (mtime_r() < end_time) {
-        /* Prevent compiler from optimizing away the loop. */
+        /* Prevent compiler from optimizing away the loop */
         asm volatile("nop");
     }
 }
 
 /* Initialization and System Control */
 
-/* UART Line Control Register bits */
-#define NS16550A_LCR 0x03
-/* Divisor Latch Access Bit: enables writing to baud rate divisor. */
-#define NS16550A_LCR_DLAB 0x80
-#define NS16550A_DLL 0x00 /* Divisor Latch LSB */
-#define NS16550A_DLM 0x01 /* Divisor Latch MSB */
-/* Config for 8-bit chars, no parity, 1 stop bit (8N1). */
-#define NS16550A_LCR_8BIT 0x03
-
-/* Initializes the UART for serial communication at a given baud rate. */
+/* Initializes the UART for serial communication at a given baud rate */
 static void uart_init(uint32_t baud)
 {
     uint32_t divisor = F_CPU / (16 * baud);
     if (unlikely(!divisor))
         divisor = 1; /* Ensure non-zero divisor */
 
-    /* Set DLAB to access divisor registers. */
+    /* Set DLAB to access divisor registers */
     NS16550A_UART0_REG(NS16550A_LCR) = NS16550A_LCR_DLAB;
     NS16550A_UART0_REG(NS16550A_DLM) = (divisor >> 8) & 0xff;
     NS16550A_UART0_REG(NS16550A_DLL) = divisor & 0xff;
-    /* Clear DLAB and set line control to 8N1 mode. */
+    /* Clear DLAB and set line control to 8N1 mode */
     NS16550A_UART0_REG(NS16550A_LCR) = NS16550A_LCR_8BIT;
 }
 
-/* Performs all essential hardware initialization at boot. */
+/* Performs all essential hardware initialization at boot */
 void hal_hardware_init(void)
 {
     uart_init(USART_BAUD);
-    /* Set the first timer interrupt. Subsequent interrupts are set in ISR. */
+    /* Set the first timer interrupt. Subsequent interrupts are set in ISR */
     mtimecmp_w(mtime_r() + (F_CPU / F_TIMER));
-    /* Install low-level I/O handlers for the C standard library. */
+    /* Install low-level I/O handlers for the C standard library */
     _stdout_install(__putchar);
     _stdin_install(__getchar);
     _stdpoll_install(__kbhit);
 }
 
-/* Halts the system in an unrecoverable state. */
+/* Halts the system in an unrecoverable state */
 void hal_panic(void)
 {
-    _di(); /* Disable all interrupts to prevent further execution. */
+    _di(); /* Disable all interrupts to prevent further execution */
 
-    /* Attempt a clean shutdown via QEMU 'virt' machine's shutdown device. */
+    /* Attempt a clean shutdown via QEMU 'virt' machine's shutdown device */
     *(volatile uint32_t *) 0x100000U = 0x5555U;
 
-    /* If shutdown fails, halt the CPU in a low-power state indefinitely. */
+    /* If shutdown fails, halt the CPU in a low-power state indefinitely */
     while (1)
         asm volatile("wfi"); /* Wait For Interrupt */
 }
 
-/* Puts the CPU into a low-power state until an interrupt occurs. */
+/* Puts the CPU into a low-power state until an interrupt occurs */
 void hal_cpu_idle(void)
 {
     asm volatile("wfi");
@@ -249,14 +249,13 @@ void hal_cpu_idle(void)
 /* Interrupt and Trap Handling */
 
 /* C-level trap handler, called by the '_isr' assembly routine.
- * @cause : The value of the 'mcause' CSR, indicating the reason for the
- * trap.
+ * @cause : The value of the 'mcause' CSR, indicating the reason for the trap.
  * @epc   : The value of the 'mepc' CSR, the PC at the time of the trap.
  */
 void do_trap(uint32_t cause, uint32_t epc)
 {
     static const char *exc_msg[] = {
-        /* For printing helpful debug messages. */
+        /* For printing helpful debug messages */
         [0] = "Instruction address misaligned",
         [1] = "Instruction access fault",
         [2] = "Illegal instruction",
@@ -283,9 +282,9 @@ void do_trap(uint32_t cause, uint32_t epc)
              * consistent tick frequency even with interrupt latency.
              */
             mtimecmp_w(mtimecmp_r() + (F_CPU / F_TIMER));
-            dispatcher(); /* Invoke the OS scheduler. */
+            dispatcher(); /* Invoke the OS scheduler */
         } else {
-            /* All other interrupt sources are unexpected and fatal. */
+            /* All other interrupt sources are unexpected and fatal */
             printf("[UNHANDLED INTERRUPT] code=%u, cause=%08x, epc=%08x\n",
                    int_code, cause, epc);
             hal_panic();
@@ -301,14 +300,14 @@ void do_trap(uint32_t cause, uint32_t epc)
     }
 }
 
-/* Enables the machine-level timer interrupt source. */
+/* Enables the machine-level timer interrupt source */
 void hal_timer_enable(void)
 {
     mtimecmp_w(mtime_r() + (F_CPU / F_TIMER));
     write_csr(mie, read_csr(mie) | MIE_MTIE);
 }
 
-/* Disables the machine-level timer interrupt source. */
+/* Disables the machine-level timer interrupt source */
 void hal_timer_disable(void)
 {
     write_csr(mie, read_csr(mie) & ~MIE_MTIE);
@@ -325,9 +324,9 @@ void hal_interrupt_tick(void)
     if (unlikely(!task))
         hal_panic(); /* Fatal error - invalid task state */
 
-    /* The task's entry point is still in RA, so this is its very first run. */
+    /* The task's entry point is still in RA, so this is its very first run */
     if ((uint32_t) task->entry == task->context[CONTEXT_RA])
-        _ei(); /* Enable global interrupts now that we are in a task. */
+        _ei(); /* Enable global interrupts now that we are in a task */
 }
 
 /* Context Switching */
@@ -341,7 +340,7 @@ int32_t setjmp(jmp_buf env)
         return -1; /* Invalid parameter */
 
     asm volatile(
-        /* Save all callee-saved registers as required by the RISC-V ABI. */
+        /* Save all callee-saved registers as required by the RISC-V ABI */
         "sw  s0,   0*4(%0)\n"
         "sw  s1,   1*4(%0)\n"
         "sw  s2,   2*4(%0)\n"
@@ -354,12 +353,12 @@ int32_t setjmp(jmp_buf env)
         "sw  s9,   9*4(%0)\n"
         "sw  s10, 10*4(%0)\n"
         "sw  s11, 11*4(%0)\n"
-        /* Save essential pointers and the return address. */
+        /* Save essential pointers and the return address */
         "sw  gp,  12*4(%0)\n"
         "sw  tp,  13*4(%0)\n"
         "sw  sp,  14*4(%0)\n"
         "sw  ra,  15*4(%0)\n"
-        /* By convention, the initial call to setjmp returns 0. */
+        /* By convention, the initial call to setjmp returns 0 */
         "li a0, 0\n"
         :
         : "r"(env)
@@ -378,12 +377,12 @@ __attribute__((noreturn)) void longjmp(jmp_buf env, int32_t val)
     if (unlikely(!env))
         hal_panic(); /* Cannot proceed with invalid context */
 
-    /* 'setjmp' must return a non-zero value after 'longjmp'. */
+    /* 'setjmp' must return a non-zero value after 'longjmp' */
     if (val == 0)
         val = 1;
 
     asm volatile(
-        /* Restore all registers from the provided 'jmp_buf'. */
+        /* Restore all registers from the provided 'jmp_buf' */
         "lw  s0,   0*4(%0)\n"
         "lw  s1,   1*4(%0)\n"
         "lw  s2,   2*4(%0)\n"
@@ -400,15 +399,15 @@ __attribute__((noreturn)) void longjmp(jmp_buf env, int32_t val)
         "lw  tp,  13*4(%0)\n"
         "lw  sp,  14*4(%0)\n"
         "lw  ra,  15*4(%0)\n"
-        /* Set the return value (in 'a0') for the 'setjmp' call. */
+        /* Set the return value (in 'a0') for the 'setjmp' call */
         "mv  a0,  %1\n"
-        /* "Return" to the restored 'ra', effectively jumping to new context. */
+        /* "Return" to the restored 'ra', effectively jumping to new context */
         "ret\n"
         :
         : "r"(env), "r"(val)
         : "memory");
 
-    __builtin_unreachable(); /* Tell compiler this point is never reached. */
+    __builtin_unreachable(); /* Tell compiler this point is never reached */
 }
 
 /* Saves execution context AND processor state.
@@ -421,7 +420,7 @@ int32_t hal_context_save(jmp_buf env)
         return -1; /* Invalid parameter */
 
     asm volatile(
-        /* Save all callee-saved registers as required by the RISC-V ABI. */
+        /* Save all callee-saved registers as required by the RISC-V ABI */
         "sw  s0,   0*4(%0)\n"
         "sw  s1,   1*4(%0)\n"
         "sw  s2,   2*4(%0)\n"
@@ -434,7 +433,7 @@ int32_t hal_context_save(jmp_buf env)
         "sw  s9,   9*4(%0)\n"
         "sw  s10, 10*4(%0)\n"
         "sw  s11, 11*4(%0)\n"
-        /* Save essential pointers and the return address. */
+        /* Save essential pointers and the return address */
         "sw  gp,  12*4(%0)\n"
         "sw  tp,  13*4(%0)\n"
         "sw  sp,  14*4(%0)\n"
@@ -449,13 +448,12 @@ int32_t hal_context_save(jmp_buf env)
         "andi t2, t2, 8\n"   /* Isolate bit 3 */
         "or   t1, t1, t2\n"  /* Combine cleared MIE with reconstructed bit */
         "sw   t1, 16*4(%0)\n"
-        /* By convention, the initial call returns 0. */
+        /* By convention, the initial call returns 0 */
         "li a0, 0\n"
         :
         : "r"(env)
         : "t0", "t1", "t2", "memory", "a0");
 
-    /* 'return' is for compiler analysis only. */
     return 0;
 }
 
@@ -471,13 +469,13 @@ __attribute__((noreturn)) void hal_context_restore(jmp_buf env, int32_t val)
         hal_panic(); /* Cannot proceed with invalid context */
 
     if (val == 0)
-        val = 1; /* Must return a non-zero value after restore. */
+        val = 1; /* Must return a non-zero value after restore */
 
     asm volatile(
-        /* Restore mstatus FIRST to ensure correct processor state. */
+        /* Restore mstatus FIRST to ensure correct processor state */
         "lw  t0, 16*4(%0)\n"
         "csrw mstatus, t0\n"
-        /* Restore all registers from the provided 'jmp_buf'. */
+        /* Restore all registers from the provided 'jmp_buf' */
         "lw  s0,   0*4(%0)\n"
         "lw  s1,   1*4(%0)\n"
         "lw  s2,   2*4(%0)\n"
@@ -494,15 +492,15 @@ __attribute__((noreturn)) void hal_context_restore(jmp_buf env, int32_t val)
         "lw  tp,  13*4(%0)\n"
         "lw  sp,  14*4(%0)\n"
         "lw  ra,  15*4(%0)\n"
-        /* Set the return value (in 'a0'). */
+        /* Set the return value (in 'a0') */
         "mv  a0,  %1\n"
-        /* "Return" to the restored 'ra', effectively jumping to new context. */
+        /* "Return" to the restored 'ra', effectively jumping to new context */
         "ret\n"
         :
         : "r"(env), "r"(val)
         : "memory");
 
-    __builtin_unreachable(); /* Tell compiler this point is never reached. */
+    __builtin_unreachable(); /* Tell compiler this point is never reached */
 }
 
 /* Low-level context restore helper. Expects a pointer to a 'jmp_buf' in 'a0'.
@@ -527,10 +525,10 @@ static void __attribute__((naked, used)) __dispatch_init(void)
         "lw  tp,  13*4(a0)\n"
         "lw  sp,  14*4(a0)\n"
         "lw  ra,  15*4(a0)\n"
-        "ret\n"); /* Jump to the task's entry point. */
+        "ret\n"); /* Jump to the task's entry point */
 }
 
-/* Transfers control from the kernel's main thread to the first task. */
+/* Transfers control from the kernel's main thread to the first task */
 __attribute__((noreturn)) void hal_dispatch_init(jmp_buf env)
 {
     if (unlikely(!env))
@@ -538,11 +536,11 @@ __attribute__((noreturn)) void hal_dispatch_init(jmp_buf env)
 
     if (kcb->preemptive)
         hal_timer_enable();
-    _ei(); /* Enable global interrupts just before launching the first task. */
+    _ei(); /* Enable global interrupts just before launching the first task */
 
     asm volatile(
-        "mv  a0, %0\n"           /* Move @env (the task's context) into 'a0'. */
-        "call __dispatch_init\n" /* Call the low-level restore routine. */
+        "mv  a0, %0\n"           /* Move @env (the task's context) into 'a0' */
+        "call __dispatch_init\n" /* Call the low-level restore routine */
         :
         : "r"(env)
         : "a0", "memory");
@@ -563,17 +561,17 @@ void hal_context_init(jmp_buf *ctx, size_t sp, size_t ss, size_t ra)
     uintptr_t stack_base = (uintptr_t) sp;
     uintptr_t stack_top;
 
-    /* Reserve a "red zone" for the ISR's full trap frame at top of stack. */
+    /* Reserve a "red zone" for the ISR's full trap frame at top of stack */
     stack_top = (stack_base + ss - ISR_STACK_FRAME_SIZE);
 
-    /* The RISC-V ABI requires the stack pointer to be 16-byte aligned. */
+    /* The RISC-V ABI requires the stack pointer to be 16-byte aligned */
     stack_top &= ~0xFUL;
 
     /* Verify stack alignment and bounds */
     if (unlikely(stack_top <= stack_base || (stack_top & 0xF) != 0))
         hal_panic(); /* Stack configuration error */
 
-    /* Zero the context for predictability. */
+    /* Zero the context for predictability */
     memset(ctx, 0, sizeof(*ctx));
 
     /* Set the essential registers for a new task:
