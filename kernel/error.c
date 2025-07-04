@@ -13,6 +13,7 @@ static const struct error_code error_desc[] = {
     {ERR_TCB_ALLOC, "TCB allocation"},
     {ERR_STACK_ALLOC, "stack allocation"},
     {ERR_TASK_NOT_FOUND, "task not found"},
+    {ERR_TASK_CANT_REMOVE, "cannot remove task"},
     {ERR_TASK_CANT_SUSPEND, "cannot suspend task"},
     {ERR_TASK_CANT_RESUME, "cannot resume task"},
     {ERR_TASK_INVALID_PRIO, "invalid task priority"},
