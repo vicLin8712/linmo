@@ -22,5 +22,8 @@ message_t *mo_mq_peek(mq_t *mq);
 
 static inline int32_t mo_mq_items(mq_t *mq)
 {
+    /* Add NULL safety to prevent crashes */
+    if (unlikely(!mq || !mq->q))
+        return 0;
     return queue_count(mq->q);
 }
