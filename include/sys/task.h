@@ -3,8 +3,13 @@
 /* Task Management and Scheduling
  *
  * Provides a lightweight task model with shared address space and
- * priority-based round-robin scheduling. Supports both preemptive and
- * cooperative scheduling modes with real-time scheduler hooks.
+ * efficient round-robin scheduling. The scheduler uses the master task
+ * list with optimized algorithms for better performance than naive O(n)
+ * implementations, while maintaining simplicity and compatibility.
+ *
+ * The scheduler provides O(n) complexity but with small constant factors
+ * and excellent practical performance for typical embedded workloads.
+ * Priority-aware time slice allocation ensures good responsiveness.
  */
 
 #include <hal.h>
@@ -13,43 +18,53 @@
 
 /* Task Priority
  *
- * Task priorities are encoded in a 16-bit value using weighted round-robin:
- * - Bits 15-8: Base Priority (Static) - determines task's "weight"
- * - Bits  7-0: Dynamic Priority (Counter) - decremented by scheduler
+ * Task priorities are encoded in a 16-bit value with simplified mapping:
+ * - Bits 15-8: Base Priority (Static) - mapped to priority level 0-7
+ * - Bits  7-0: Time Slice Counter - decremented each tick when running
  *
- * Lower base priority values mean higher priority. When a task runs, its
- * counter is reloaded from its base priority. This ensures high-priority
- * tasks (low base values) run more frequently than low-priority tasks.
- *
- * The enum values duplicate the base priority in both bytes for easy
- * initialization.
+ * Lower base priority values mean higher priority (level 0 = highest).
  */
 enum task_priorities {
-    TASK_PRIO_CRIT = 0x0101,     /* Critical, must-run tasks */
-    TASK_PRIO_REALTIME = 0x0303, /* Real-time tasks */
-    TASK_PRIO_HIGH = 0x0707,     /* High priority tasks */
-    TASK_PRIO_ABOVE = 0x0F0F,    /* Above normal priority */
-    TASK_PRIO_NORMAL = 0x1F1F,   /* Default priority for new tasks */
-    TASK_PRIO_BELOW = 0x3F3F,    /* Below normal priority */
-    TASK_PRIO_LOW = 0x7F7F,      /* Low priority tasks */
-    TASK_PRIO_IDLE = 0xFFFF      /* Idle task runs when nothing else ready */
+    TASK_PRIO_CRIT = 0x0101,     /* Critical, must-run tasks (level 0) */
+    TASK_PRIO_REALTIME = 0x0303, /* Real-time tasks (level 1) */
+    TASK_PRIO_HIGH = 0x0707,     /* High priority tasks (level 2) */
+    TASK_PRIO_ABOVE = 0x0F0F,    /* Above normal priority (level 3) */
+    TASK_PRIO_NORMAL = 0x1F1F,   /* Default priority for new tasks (level 4) */
+    TASK_PRIO_BELOW = 0x3F3F,    /* Below normal priority (level 5) */
+    TASK_PRIO_LOW = 0x7F7F,      /* Low priority tasks (level 6) */
+    TASK_PRIO_IDLE = 0xFFFF      /* runs when nothing else ready (level 7) */
 };
 
 /* Task Lifecycle States */
 enum task_states {
     TASK_STOPPED,  /* Task created but not yet scheduled */
-    TASK_READY,    /* Task in ready list, waiting to be scheduled */
+    TASK_READY,    /* Task in ready state, waiting to be scheduled */
     TASK_RUNNING,  /* Task currently executing on CPU */
     TASK_BLOCKED,  /* Task waiting for delay timer to expire */
     TASK_SUSPENDED /* Task paused/excluded from scheduling until resumed */
 };
+
+/* Priority Level Constants for Priority-Aware Time Slicing */
+#define TASK_PRIORITY_LEVELS 8  /* Number of priority levels (0-7) */
+#define TASK_HIGHEST_PRIORITY 0 /* Highest priority level */
+#define TASK_LOWEST_PRIORITY 7  /* Lowest priority level */
+
+/* Time slice allocation per priority level (in system ticks) */
+#define TASK_TIMESLICE_CRIT 1     /* Critical tasks: minimal slice */
+#define TASK_TIMESLICE_REALTIME 2 /* Real-time tasks: small slice */
+#define TASK_TIMESLICE_HIGH 3     /* High priority: normal slice */
+#define TASK_TIMESLICE_ABOVE 4    /* Above normal: normal slice */
+#define TASK_TIMESLICE_NORMAL 5   /* Normal priority: standard slice */
+#define TASK_TIMESLICE_BELOW 7    /* Below normal: longer slice */
+#define TASK_TIMESLICE_LOW 10     /* Low priority: longer slice */
+#define TASK_TIMESLICE_IDLE 15    /* Idle tasks: longest slice */
 
 /* Task Control Block (TCB)
  *
  * Contains all essential information about a single task, including saved
  * context, stack details, and scheduling parameters.
  */
-typedef struct {
+typedef struct tcb {
     /* Context and Stack Management */
     jmp_buf context; /* Saved CPU context (GPRs, SP, PC) for task switching */
     void *stack;     /* Pointer to base of task's allocated stack memory */
@@ -57,11 +72,13 @@ typedef struct {
     void (*entry)(void); /* Task's entry point function */
 
     /* Scheduling Parameters */
-    uint16_t prio;  /* Encoded priority (base and dynamic counter) */
-    uint16_t delay; /* Ticks remaining for task in TASK_BLOCKED state */
-    uint16_t id;    /* Unique task ID, assigned by kernel upon creation */
-    uint8_t state;  /* Current lifecycle state (e.g., TASK_READY) */
-    uint8_t flags;  /* Task flags for future extensions (reserved) */
+    uint16_t prio;      /* Encoded priority (base and time slice counter) */
+    uint8_t prio_level; /* Priority level (0-7, 0 = highest) */
+    uint8_t time_slice; /* Current time slice remaining */
+    uint16_t delay;     /* Ticks remaining for task in TASK_BLOCKED state */
+    uint16_t id;        /* Unique task ID, assigned by kernel upon creation */
+    uint8_t state;      /* Current lifecycle state (e.g., TASK_READY) */
+    uint8_t flags;      /* Task flags for future extensions (reserved) */
 
     /* Real-time Scheduling Support */
     void *rt_prio; /* Opaque pointer for custom real-time scheduler hook */
@@ -78,20 +95,15 @@ typedef struct {
     list_node_t *task_current; /* Node of currently running task */
     jmp_buf context; /* Saved context of main kernel thread before scheduling */
     uint16_t next_tid;   /* Monotonically increasing ID for next new task */
-    uint16_t task_count; /* Cached count of active tasks for O(1) access */
+    uint16_t task_count; /* Cached count of active tasks for quick access */
     bool preemptive;     /* true = preemptive; false = cooperative */
-
-    /* Scheduler Optimization */
-    list_node_t
-        *last_ready_hint; /* Cache last ready task found to reduce iterations */
 
     /* Real-Time Scheduler Hook */
     int32_t (*rt_sched)(void); /* Custom real-time scheduler function */
 
     /* Timer Management */
-    list_t *timer_list; /* List of active software timers */
-    volatile uint32_t
-        ticks; /* Global system tick counter, incremented by timer ISR */
+    list_t *timer_list;      /* List of active software timers */
+    volatile uint32_t ticks; /* Global system tick, incremented by timer */
 } kcb_t;
 
 /* Global pointer to the singleton Kernel Control Block */

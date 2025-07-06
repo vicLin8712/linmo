@@ -62,8 +62,7 @@ typedef struct {
  *   When "remaining" reaches zero it is reloaded from "credits" on the task’s
  *   next turn.
  * – The function returns the ID of the selected RT task, or –1 when no RT task
- *   is ready so the kernel should fall back to its normal weighted round-robin
- *   scheduler.
+ *   is ready so the kernel should fall back to its round-robin scheduler.
  */
 static int32_t custom_sched(void)
 {
