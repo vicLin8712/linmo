@@ -71,7 +71,7 @@ __attribute__((naked, section(".text.prologue"))) void _entry(void)
         "csrw   mtvec, t0\n"
 
         /* Enable machine-level external interrupts (MIE.MEIE).
-         * This allows peripherals like the CLINT timer to raise interrupts.
+         * This allows peripherals like the UART to raise interrupts.
          * Global interrupts remain disabled by mstatus.MIE until the scheduler
          * is ready.
          */
