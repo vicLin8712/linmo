@@ -85,9 +85,7 @@ void free(void *ptr)
     free_blocks_count++;
 
     /* Forward merge if the next block is free and physically adjacent */
-    if (p->next && !IS_USED(p->next) &&
-        (uint8_t *) p + sizeof(memblock_t) + GET_SIZE(p) ==
-            (uint8_t *) p->next) {
+    if (p->next && !IS_USED(p->next)) {
         p->size = GET_SIZE(p) + sizeof(memblock_t) + GET_SIZE(p->next);
         p->next = p->next->next;
         free_blocks_count--;
@@ -101,9 +99,12 @@ void free(void *ptr)
         current = current->next;
     }
 
-    if (prev && !IS_USED(prev) &&
-        (uint8_t *) prev + sizeof(memblock_t) + GET_SIZE(prev) ==
-            (uint8_t *) p) {
+    if (prev && !IS_USED(prev)) {
+        if (!validate_block(prev)) {
+            CRITICAL_LEAVE();
+            panic(ERR_HEAP_CORRUPT);
+            return;
+        }
         prev->size = GET_SIZE(prev) + sizeof(memblock_t) + GET_SIZE(p);
         prev->next = p->next;
         free_blocks_count--;
@@ -119,8 +120,11 @@ static void selective_coalesce(void)
 
     while (p && p->next) {
         /* Merge only when blocks are FREE *and* adjacent in memory */
-        uint8_t *pend = (uint8_t *) p + sizeof(memblock_t) + GET_SIZE(p);
-        if (!IS_USED(p) && !IS_USED(p->next) && pend == (uint8_t *) p->next) {
+        if (!validate_block(p)) {
+            panic(ERR_HEAP_CORRUPT);
+            return;
+        }
+        if (!IS_USED(p) && !IS_USED(p->next)) {
             p->size = GET_SIZE(p) + sizeof(memblock_t) + GET_SIZE(p->next);
             p->next = p->next->next;
             free_blocks_count--;
