@@ -4,6 +4,7 @@
 #include <sys/task.h>
 #include <types.h>
 
+#include "private/error.h"
 #include "private/utils.h"
 
 /* Memory allocator using first-fit strategy with selective coalescing.
@@ -71,6 +72,7 @@ void free(void *ptr)
     /* Validate the block being freed */
     if (!validate_block(p) || !IS_USED(p)) {
         CRITICAL_LEAVE();
+        panic(ERR_HEAP_CORRUPT);
         return; /* Invalid or double-free */
     }
 
@@ -146,6 +148,7 @@ void *malloc(uint32_t size)
     while (p) {
         if (!validate_block(p)) {
             CRITICAL_LEAVE();
+            panic(ERR_HEAP_CORRUPT);
             return NULL; /* Heap corruption detected */
         }
 
@@ -239,8 +242,10 @@ void *realloc(void *ptr, uint32_t size)
     memblock_t *old_block = ((memblock_t *) ptr) - 1;
 
     /* Validate the existing block */
-    if (!validate_block(old_block) || !IS_USED(old_block))
+    if (!validate_block(old_block) || !IS_USED(old_block)) {
+        panic(ERR_HEAP_CORRUPT);
         return NULL;
+    }
 
     size_t old_size = GET_SIZE(old_block);
 
