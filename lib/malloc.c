@@ -56,6 +56,11 @@ static inline bool validate_block(memblock_t *block)
     if ((uint8_t *) block + sizeof(memblock_t) + size > (uint8_t *) heap_end)
         return false;
 
+    if (block->next &&
+        (uint8_t *) block + sizeof(memblock_t) + GET_SIZE(block) !=
+            (uint8_t *) block->next)
+        return false;
+
     return true;
 }
 
