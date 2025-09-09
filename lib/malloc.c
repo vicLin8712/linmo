@@ -211,7 +211,7 @@ void *calloc(uint32_t nmemb, uint32_t size)
     if (unlikely(nmemb && size > MALLOC_MAX_SIZE / nmemb))
         return NULL;
 
-    uint32_t total_size = nmemb * size;
+    uint32_t total_size = ALIGN4(nmemb * size);
     void *buf = malloc(total_size);
 
     if (buf)
@@ -233,6 +233,8 @@ void *realloc(void *ptr, uint32_t size)
         free(ptr);
         return NULL;
     }
+
+    size = ALIGN4(size);
 
     memblock_t *old_block = ((memblock_t *) ptr) - 1;
 
