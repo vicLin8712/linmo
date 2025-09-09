@@ -45,20 +45,21 @@ static uint32_t free_blocks_count; /* track fragmentation */
 /* Validate block integrity */
 static inline bool validate_block(memblock_t *block)
 {
-    if (!IS_VALID_BLOCK(block))
+    if (unlikely(!IS_VALID_BLOCK(block)))
         return false;
 
     size_t size = GET_SIZE(block);
-    if (!size || size > MALLOC_MAX_SIZE)
+    if (unlikely(!size || size > MALLOC_MAX_SIZE))
         return false;
 
     /* Check if block extends beyond heap */
-    if ((uint8_t *) block + sizeof(memblock_t) + size > (uint8_t *) heap_end)
+    if (unlikely((uint8_t *) block + sizeof(memblock_t) + size >
+                 (uint8_t *) heap_end))
         return false;
 
-    if (block->next &&
-        (uint8_t *) block + sizeof(memblock_t) + GET_SIZE(block) !=
-            (uint8_t *) block->next)
+    if (unlikely(block->next &&
+                 (uint8_t *) block + sizeof(memblock_t) + GET_SIZE(block) !=
+                     (uint8_t *) block->next))
         return false;
 
     return true;
@@ -75,7 +76,7 @@ void free(void *ptr)
     memblock_t *p = ((memblock_t *) ptr) - 1;
 
     /* Validate the block being freed */
-    if (!validate_block(p) || !IS_USED(p)) {
+    if (unlikely(!validate_block(p) || !IS_USED(p))) {
         CRITICAL_LEAVE();
         panic(ERR_HEAP_CORRUPT);
         return; /* Invalid or double-free */
@@ -100,7 +101,7 @@ void free(void *ptr)
     }
 
     if (prev && !IS_USED(prev)) {
-        if (!validate_block(prev)) {
+        if (unlikely(!validate_block(prev))) {
             CRITICAL_LEAVE();
             panic(ERR_HEAP_CORRUPT);
             return;
@@ -120,7 +121,7 @@ static void selective_coalesce(void)
 
     while (p && p->next) {
         /* Merge only when blocks are FREE *and* adjacent in memory */
-        if (!validate_block(p)) {
+        if (unlikely(!validate_block(p))) {
             panic(ERR_HEAP_CORRUPT);
             return;
         }
@@ -155,7 +156,7 @@ void *malloc(uint32_t size)
 
     memblock_t *p = first_free;
     while (p) {
-        if (!validate_block(p)) {
+        if (unlikely(!validate_block(p))) {
             CRITICAL_LEAVE();
             panic(ERR_HEAP_CORRUPT);
             return NULL; /* Heap corruption detected */
@@ -254,7 +255,7 @@ void *realloc(void *ptr, uint32_t size)
     memblock_t *old_block = ((memblock_t *) ptr) - 1;
 
     /* Validate the existing block */
-    if (!validate_block(old_block) || !IS_USED(old_block)) {
+    if (unlikely(!validate_block(old_block) || !IS_USED(old_block))) {
         panic(ERR_HEAP_CORRUPT);
         return NULL;
     }
