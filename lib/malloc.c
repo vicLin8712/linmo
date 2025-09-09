@@ -135,6 +135,28 @@ static void selective_coalesce(void)
     }
 }
 
+static inline void split_block(memblock_t *block, size_t size)
+{
+    size_t remaining;
+    memblock_t *new_block;
+
+    if (unlikely(size >= GET_SIZE(block))) {
+        panic(ERR_HEAP_CORRUPT);
+        return;
+    }
+    remaining = GET_SIZE(block) - size;
+    /* Split only when remaining memory is large enough */
+    if (remaining < sizeof(memblock_t) + MALLOC_MIN_SIZE)
+        return;
+    new_block = (memblock_t *) ((size_t) block + sizeof(memblock_t) + size);
+    new_block->next = block->next;
+    new_block->size = remaining - sizeof(memblock_t);
+    MARK_FREE(new_block);
+    block->next = new_block;
+    block->size = size | IS_USED(block);
+    free_blocks_count++; /* New free block created */
+}
+
 /* O(n) first-fit allocation with selective coalescing */
 void *malloc(uint32_t size)
 {
