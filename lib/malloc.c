@@ -177,8 +177,11 @@ void *malloc(uint32_t size)
             }
 
             MARK_USED(p);
-            if (free_blocks_count > 0)
-                free_blocks_count--;
+            if (unlikely(free_blocks_count <= 0)) {
+                panic(ERR_HEAP_CORRUPT);
+                return NULL;
+            }
+            free_blocks_count--;
 
             CRITICAL_LEAVE();
             return (void *) (p + 1);
