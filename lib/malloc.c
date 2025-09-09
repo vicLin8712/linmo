@@ -278,6 +278,16 @@ void *realloc(void *ptr, uint32_t size)
         old_size - size < sizeof(memblock_t) + MALLOC_MIN_SIZE)
         return ptr;
 
+    /* fast path for shrinking */
+    if (size <= old_size) {
+        split_block(old_block, size);
+        /* Trigger coalescing only when fragmentation is high */
+        if (free_blocks_count > COALESCE_THRESHOLD)
+            selective_coalesce();
+        CRITICAL_LEAVE();
+        return (void *) (old_block + 1);
+    }
+
     void *new_buf = malloc(size);
     if (new_buf) {
         memcpy(new_buf, ptr, min(old_size, size));
