@@ -185,19 +185,8 @@ void *malloc(uint32_t size)
         }
 
         if (!IS_USED(p) && GET_SIZE(p) >= size) {
-            size_t remaining = GET_SIZE(p) - size;
-
             /* Split block only if remainder is large enough to be useful */
-            if (remaining >= sizeof(memblock_t) + MALLOC_MIN_SIZE) {
-                memblock_t *new_block =
-                    (memblock_t *) ((size_t) p + sizeof(memblock_t) + size);
-                new_block->next = p->next;
-                new_block->size = remaining - sizeof(memblock_t);
-                MARK_FREE(new_block);
-                p->next = new_block;
-                p->size = size;
-                free_blocks_count++; /* New free block created */
-            }
+            split_block(p, size);
 
             MARK_USED(p);
             if (unlikely(free_blocks_count <= 0)) {
