@@ -288,6 +288,23 @@ void *realloc(void *ptr, uint32_t size)
         return (void *) (old_block + 1);
     }
 
+    /* fast path for growing */
+    if (old_block->next && !IS_USED(old_block->next) &&
+        GET_SIZE(old_block) + sizeof(memblock_t) + GET_SIZE(old_block->next) >=
+            size) {
+        old_block->size = GET_SIZE(old_block) + sizeof(memblock_t) +
+                          GET_SIZE(old_block->next);
+        old_block->next = old_block->next->next;
+        free_blocks_count--;
+        split_block(old_block, size);
+        /* Trigger coalescing only when fragmentation is high */
+        if (free_blocks_count > COALESCE_THRESHOLD)
+            selective_coalesce();
+        CRITICAL_LEAVE();
+        return (void *) (old_block + 1);
+    }
+
+
     void *new_buf = malloc(size);
     if (new_buf) {
         memcpy(new_buf, ptr, min(old_size, size));
