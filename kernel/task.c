@@ -15,6 +15,14 @@
 static int32_t noop_rtsched(void);
 void _timer_tick_handler(void);
 
+/* Hart scheduler */
+static sched_t hart0 = {
+    .ready_bitmap = 0,
+    .ready_queues = {NULL},
+    .rr_cursors = {NULL},
+    .hart_id = 0,
+};
+
 /* Kernel-wide control block (KCB) */
 static kcb_t kernel_state = {
     .tasks = NULL,
@@ -25,6 +33,7 @@ static kcb_t kernel_state = {
     .task_count = 0,
     .ticks = 0,
     .preemptive = true, /* Default to preemptive mode */
+    .harts = &hart0,    /* Initial hart */
 };
 kcb_t *kcb = &kernel_state;
 
