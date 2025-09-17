@@ -86,6 +86,10 @@ typedef struct tcb {
 
     /* Stack Protection */
     uint32_t canary; /* Random stack canary for overflow detection */
+
+    /* State transition support */
+    /* Ready queue membership node (only one per task) */
+    list_node_t rq_node;
 } tcb_t;
 
 /* Kernel Control Block (KCB)
@@ -108,6 +112,12 @@ typedef struct {
     /* Timer Management */
     list_t *timer_list;      /* List of active software timers */
     volatile uint32_t ticks; /* Global system tick, incremented by timer */
+
+    /* Scheduling attributions */
+    uint8_t ready_bitmap; /* 8-bit priority bitmap */
+    list_t
+        *ready_queues[TASK_PRIORITY_LEVELS]; /* Separate queue per priority */
+    list_node_t *rr_cursors[TASK_PRIORITY_LEVELS]; /* Round-robin position */
 } kcb_t;
 
 /* Global pointer to the singleton Kernel Control Block */
