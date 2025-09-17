@@ -25,6 +25,7 @@
 
 /* tcb list node helpers */
 #define tcb_from_global_node(p) container_of(p, tcb_t, global_node)
+#define tcb_from_rq_node(p) container_of(p, tcb_t, rq_node)
 #define tcb_from_mutex_node(p) container_of(p, tcb_t, mutex_node)
 
 /* timer list node helpers */

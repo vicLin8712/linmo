@@ -26,6 +26,9 @@ static kcb_t kernel_state = {
     .task_count = 0,
     .ticks = 0,
     .preemptive = true, /* Default to preemptive mode */
+    .ready_bitmap = 0,
+    .ready_queues = {NULL},
+    .rr_cursors = {NULL},
 };
 kcb_t *kcb = &kernel_state;
 
