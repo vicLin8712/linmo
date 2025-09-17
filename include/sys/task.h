@@ -84,6 +84,28 @@ typedef struct tcb {
     void *rt_prio; /* Opaque pointer for custom real-time scheduler hook */
 } tcb_t;
 
+/* Scheduler attribution */
+typedef struct sched {
+    volatile uint32_t ready_bitmap; /* 8-bit priority bitmap */
+    list_t
+        *ready_queues[TASK_PRIORITY_LEVELS]; /* Separate queue per priority */
+    uint16_t queue_counts[TASK_PRIORITY_LEVELS]; /* O(1) size tracking */
+
+    /* Weighted Round-Robin State per Priority Level */
+    list_node_t *rr_cursors[TASK_PRIORITY_LEVELS]; /* Round-robin position */
+    uint32_t
+        quantum_cycles[TASK_PRIORITY_LEVELS]; /* Scheduling cycles per level */
+
+    /* Performance Optimization */
+    uint8_t last_selected_prio; /* Cache hint for next selection */
+    uint32_t local_switches;    /* Context switch count */
+
+    /* Hart-Specific Data */
+    tcb_t *current_task; /* Currently running task */
+    uint8_t hart_id;     /* RISC-V hart identifier */
+
+} sched_t;
+
 /* Kernel Control Block (KCB)
  *
  * Singleton structure holding global kernel state, including task lists,
@@ -104,6 +126,9 @@ typedef struct {
     /* Timer Management */
     list_t *timer_list;      /* List of active software timers */
     volatile uint32_t ticks; /* Global system tick, incremented by timer */
+
+    /* per-hart scheduler management */
+    sched_t scheduler;
 } kcb_t;
 
 /* Global pointer to the singleton Kernel Control Block */
