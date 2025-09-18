@@ -128,7 +128,7 @@ typedef struct {
     volatile uint32_t ticks; /* Global system tick, incremented by timer */
 
     /* per-hart scheduler management */
-    sched_t scheduler;
+    sched_t *harts;
 } kcb_t;
 
 /* Global pointer to the singleton Kernel Control Block */
