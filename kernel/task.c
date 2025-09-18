@@ -15,6 +15,18 @@
 static int32_t noop_rtsched(void);
 void _timer_tick_handler(void);
 
+/* hart 0 scheduler */
+static sched_t hart0_sched = {
+    .ready_bitmap = 0,
+    .ready_queues = {NULL},
+    .rr_cursors = {NULL},
+    .quantum_cycles = {0},
+    .last_selected_prio = 0,
+    .local_switches = 0,
+    .current_task = NULL,
+    .hart_id = 0,
+};
+
 /* Kernel-wide control block (KCB) */
 static kcb_t kernel_state = {
     .tasks = NULL,
@@ -25,6 +37,7 @@ static kcb_t kernel_state = {
     .task_count = 0,
     .ticks = 0,
     .preemptive = true, /* Default to preemptive mode */
+    .harts = &hart0_sched,
 };
 kcb_t *kcb = &kernel_state;
 
@@ -344,7 +357,6 @@ static void sched_enqueue_task(tcb_t *task)
     /* Ensure task has appropriate time slice for its priority */
     task->time_slice = get_priority_timeslice(task->prio_level);
     task->state = TASK_READY;
-
     /* Task selection is handled directly through the master task list */
 }
 
@@ -418,34 +430,32 @@ uint16_t sched_select_next_task(void)
 
     /* Mark current task as ready if it was running */
     if (current_task->state == TASK_RUNNING)
+    {
         current_task->state = TASK_READY;
+        list_pushback(kcb->harts->ready_queues[current_task->prio_level], current_task);
+        kcb->harts->ready_bitmap |= (1U << current_task->prio_level);
+    }
 
     /* Round-robin search: find next ready task in the master task list */
-    list_node_t *start_node = kcb->task_current;
-    list_node_t *node = start_node;
-    int iterations = 0; /* Safety counter to prevent infinite loops */
 
-    do {
-        /* Move to next task (circular) */
-        node = list_cnext(kcb->tasks, node);
-        if (!node || !node->data)
-            continue;
+    /* Find highest priority task queue */
+    uint32_t bitmap = kcb->harts->ready_bitmap;
+    int highest_prio_level = 0;
+    for (;!(bitmap & 1U); highest_prio_level++, bitmap >>= 1);
 
-        tcb_t *task = node->data;
+    /* Pop out from corresponding queue and mark it as TASK_RUNNING */
+    list_node_t *node = kcb->harts->ready_queues[highest_prio_level]->head->next;
+    list_pop(kcb->harts->ready_queues[highest_prio_level]);
+    ((tcb_t *)node->data)->state = TASK_RUNNING;
+    kcb->task_current = node;
 
-        /* Skip non-ready tasks */
-        if (task->state != TASK_READY)
-            continue;
-
-        /* Found a ready task */
-        kcb->task_current = node;
-        task->state = TASK_RUNNING;
-        task->time_slice = get_priority_timeslice(task->prio_level);
-
-        return task->id;
-
-    } while (node != start_node && ++iterations < SCHED_IMAX);
-
+    /* Check popped queue is empty or not */
+    if (kcb->harts->ready_queues[highest_prio_level]->length == 0)
+        kcb->harts->ready_bitmap &= ~(1U << highest_prio_level);
+    
+    if (node)
+        return 1;
+    
     /* No ready tasks found - this should not happen in normal operation */
     panic(ERR_NO_TASKS);
     return 0;
@@ -603,6 +613,12 @@ int32_t mo_task_spawn(void *task_entry, uint16_t stack_size_req)
         }
     }
 
+    /* Create corresponding ready queue */
+    if (!kcb->harts->ready_queues[tcb->prio_level]) {
+        kcb->harts->ready_queues[tcb->prio_level] = list_create();
+        kcb->tasks = list_create();
+    }
+
     list_node_t *node = list_pushback(kcb->tasks, tcb);
     if (!node) {
         CRITICAL_LEAVE();
@@ -615,8 +631,16 @@ int32_t mo_task_spawn(void *task_entry, uint16_t stack_size_req)
     tcb->id = kcb->next_tid++;
     kcb->task_count++; /* Cached count of active tasks for quick access */
 
-    if (!kcb->task_current)
+    /* If tcb is the first task, turn it into TASK_RUNNING state and does not put into ready queue */
+    if (!kcb->task_current) {
         kcb->task_current = node;
+        tcb->state = TASK_RUNNING;
+    }
+    else {
+        /* Setup bitmap and put into corresponding ready queue */
+        kcb->harts->ready_bitmap |= (1U << tcb->prio_level);
+        list_pushback(kcb->harts->ready_queues[tcb->prio_level], tcb);
+    }
 
     CRITICAL_LEAVE();
 
@@ -630,8 +654,10 @@ int32_t mo_task_spawn(void *task_entry, uint16_t stack_size_req)
 
     /* Add to cache and mark ready */
     cache_task(tcb->id, tcb);
-    sched_enqueue_task(tcb);
 
+    /* Active task from TASK_STOPPED state */
+    if (tcb->state == TASK_STOPPED)
+        sched_enqueue_task(tcb);
     return tcb->id;
 }
 
