@@ -59,6 +59,12 @@ enum task_states {
 #define TASK_TIMESLICE_LOW 10     /* Low priority: longer slice */
 #define TASK_TIMESLICE_IDLE 15    /* Idle tasks: longest slice */
 
+/* Bitmap operations */
+#define bitmap_check(prio) (kcb->harts->ready_bitmap & 1U << prio)
+#define bitmap_set(prio) (kcb->harts->ready_bitmap |= 1U << prio)
+#define bitmap_clean(prio) (kcb->harts->ready_bitmap &= ~(1U << prio))
+
+
 /* Task Control Block (TCB)
  *
  * Contains all essential information about a single task, including saved
@@ -86,7 +92,7 @@ typedef struct tcb {
 
 /* Scheduler attribution */
 typedef struct sched {
-    volatile uint32_t ready_bitmap; /* 8-bit priority bitmap */
+    uint32_t ready_bitmap; /* 8-bit priority bitmap */
     list_t
         *ready_queues[TASK_PRIORITY_LEVELS]; /* Separate queue per priority */
     uint16_t queue_counts[TASK_PRIORITY_LEVELS]; /* O(1) size tracking */
