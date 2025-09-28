@@ -22,6 +22,7 @@ static const struct error_code error_desc[] = {
 
     /* stack guard */
     {ERR_STACK_CHECK, "stack corruption"},
+    {ERR_HEAP_CORRUPT, "heap corruption or invalid free"},
 
     /* IPC / sync */
     {ERR_PIPE_ALLOC, "pipe allocation"},

@@ -27,6 +27,7 @@ enum {
 
     /* Memory Protection Errors */
     ERR_STACK_CHECK, /* Stack overflow or corruption detected */
+    ERR_HEAP_CORRUPT, /* Heap corruption or invalid free detected */
 
     /* IPC and Synchronization Errors */
     ERR_PIPE_ALLOC,    /* Pipe allocation failed */
