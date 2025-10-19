@@ -227,11 +227,14 @@ void _timer_tick_handler(void)
     /* Collect expired timers in one pass, limited to batch size */
     while (!list_is_empty(kcb->timer_list) &&
            expired_count < TIMER_BATCH_SIZE) {
-        timer_t *t = (timer_t *) kcb->timer_list->head->next->data;
+        list_node_t *node = kcb->timer_list->head->next;
+        timer_t *t = (timer_t *) node->data;
 
         if (now >= t->deadline_ticks) {
             expired_timers[expired_count++] = t;
-            list_pop(kcb->timer_list); /* O(1) removal from head */
+            kcb->timer_list->head->next = node->next;
+            kcb->timer_list->length--;
+            return_timer_node(node);
         } else {
             /* First timer not expired, so none further down are */
             break;
@@ -347,7 +350,15 @@ int32_t mo_timer_destroy(uint16_t id)
     }
 
     /* Remove from master list */
-    list_remove(all_timers_list, node);
+    list_node_t *prev = all_timers_list->head;
+    while (prev->next != all_timers_list->tail && prev->next != node)
+        prev = prev->next;
+
+    if (likely(prev->next == node)) {
+        prev->next = node->next;
+        all_timers_list->length--;
+    }
+
     free(t);
     return_timer_node(node);
 
