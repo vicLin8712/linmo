@@ -456,6 +456,20 @@ void sched_wakeup_task(tcb_t *task)
         sched_enqueue_task(task);
 }
 
+/* System idle task, it will be executed when no ready tasks in ready queue */
+static void sched_idle(void)
+{
+    if (!kcb->preemptive)
+        /* Cooperative mode idle */
+        while (1)
+            mo_task_yield();
+
+    /* Preemptive mode idle */
+    while (1)
+        mo_task_wfi();
+}
+
+
 /* Efficient Round-Robin Task Selection with O(n) Complexity
  *
  * Selects the next ready task using circular traversal of the master task list.
@@ -615,6 +629,55 @@ static bool init_task_stack(tcb_t *tcb, size_t stack_size)
     tcb->stack = stack;
     tcb->stack_sz = stack_size;
     return true;
+}
+
+/* Initialize idle task */
+void idle_task_init(void)
+{
+    /* Ensure proper alignment */
+    size_t stack_size = DEFAULT_STACK_SIZE;
+    stack_size = (stack_size + 0xF) & ~0xFU;
+
+    /* Allocate and initialize TCB */
+    tcb_t *idle = malloc(sizeof(tcb_t));
+    if (!idle)
+        panic(ERR_TCB_ALLOC);
+
+    idle->entry = &sched_idle;
+    idle->delay = 0;
+    idle->rt_prio = NULL;
+    idle->state = TASK_READY;
+    idle->flags = 0;
+
+    /* Set idle task priority */
+    idle->prio = TASK_PRIO_IDLE;
+    idle->prio_level = 0;
+    idle->time_slice = 0;
+
+    /* Set idle task id and task count */
+    idle->id = kcb->next_tid++;
+    kcb->task_count++;
+
+    /* Initialize stack */
+    if (!init_task_stack(idle, stack_size)) {
+        free(idle);
+        panic(ERR_STACK_ALLOC);
+    }
+
+    /* Bindin idle task into kcb */
+    kcb->task_idle.data = idle;
+
+    /* Initialize idle task execution context */
+    hal_context_init(&idle->context, (size_t) idle->stack, stack_size,
+                     (size_t) &sched_idle);
+
+    printf("idle id %u: entry=%p stack=%p size=%u\n", idle->id, &sched_idle,
+           idle->stack, (unsigned int) stack_size);
+
+    if (!kcb->task_current)
+        kcb->task_current = kcb->harts->task_idle;
+
+    return;
 }
 
 /* Task Management API */
