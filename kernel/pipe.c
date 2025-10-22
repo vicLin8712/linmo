@@ -34,21 +34,6 @@ static inline uint16_t pipe_free_space_internal(const pipe_t *p)
     return (p->mask + 1) - p->used;
 }
 
-static inline char pipe_get_byte(pipe_t *p)
-{
-    char val = p->buf[p->head];
-    p->head = (p->head + 1) & p->mask;
-    p->used--;
-    return val;
-}
-
-static inline void pipe_put_byte(pipe_t *p, char c)
-{
-    p->buf[p->tail] = c;
-    p->tail = (p->tail + 1) & p->mask;
-    p->used++;
-}
-
 /* bulk read operation within critical section */
 static uint16_t pipe_bulk_read(pipe_t *p, char *dst, uint16_t max_bytes)
 {
