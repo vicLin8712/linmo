@@ -525,20 +525,20 @@ static inline tcb_t *sched_switch_to_idle(void)
     return idle;
 }
 
-/* Efficient Round-Robin Task Selection with O(n) Complexity
+/* Efficient Round-Robin Task Selection (Cursor-Based, O(1) Complexity)
  *
- * Selects the next ready task using circular traversal of the master task list.
+ * Selects the next ready task by advancing the per-priority round-robin
+ * cursor (rr_cursor) circularly using list API list_cnext().
  *
- * Complexity: O(n) where n = number of tasks
- * - Best case: O(1) when next task in sequence is ready
- * - Worst case: O(n) when only one task is ready and it's the last checked
- * - Typical case: O(k) where k << n (number of non-ready tasks to skip)
+ * Complexity: O(1)
+ * - Always constant-time selection, regardless of total task count.
+ * - No need to traverse the task list.
  *
  * Performance characteristics:
- * - Excellent for small-to-medium task counts (< 50 tasks)
- * - Simple and reliable implementation
- * - Good cache locality due to sequential list traversal
- * - Priority-aware time slice allocation
+ * - Ideal for systems with frequent context switches or many tasks.
+ * - Excellent cache locality: only touches nodes in the active ready queue.
+ * - Priority-aware: highest non-empty ready queue is chosen via bitmap lookup.
+ * - Each priority level maintains its own rr_cursor to ensure fair rotation.
  */
 uint16_t sched_select_next_task(void)
 {
@@ -551,53 +551,36 @@ uint16_t sched_select_next_task(void)
     if (current_task->state == TASK_RUNNING)
         current_task->state = TASK_READY;
 
-    /* Round-robin search: find next ready task in the master task list */
-    list_node_t *start_node = kcb->task_current;
-    list_node_t *node = start_node;
-    int iterations = 0; /* Safety counter to prevent infinite loops */
+    /* Check out bitmap */
+    uint32_t bitmap = kcb->ready_bitmap;
 
-    do {
-        /* Move to next task (circular) */
-        node = list_cnext(kcb->tasks, node);
-        if (!node || !node->data)
-            continue;
+    /* If no available ready queue found in bitmap - all tasks blocked, the
+     * scheduler will switch to system idle task and wait for next timer
+     * interrupt*/
+    if (unlikely(!bitmap))
+        return sched_switch_to_idle()->id;
 
-        tcb_t *task = node->data;
+    /* Find top priority ready queue */
+    uint8_t top_prio_level = find_highest_ready_priority(bitmap);
 
-        /* Skip non-ready tasks */
-        if (task->state != TASK_READY)
-            continue;
-
-        /* Found a ready task */
-        kcb->task_current = node;
-        task->state = TASK_RUNNING;
-        task->time_slice = get_priority_timeslice(task->prio_level);
-
-        return task->id;
-
-    } while (node != start_node && ++iterations < SCHED_IMAX);
-
-    /* No ready tasks found in preemptive mode - all tasks are blocked.
-     * This is normal for periodic RT tasks waiting for their next period.
-     * We CANNOT return a BLOCKED task as that would cause it to run.
-     * Instead, find ANY task (even blocked) as a placeholder, then wait for
-     * interrupt.
-     */
-    if (kcb->preemptive) {
-        /* Select any task as placeholder (dispatcher won't actually switch to
-         * it if blocked) */
-        list_node_t *any_node = list_next(kcb->tasks->head);
-        while (any_node && any_node != kcb->tasks->tail) {
-            if (any_node->data) {
-                kcb->task_current = any_node;
-                tcb_t *any_task = any_node->data;
-                return any_task->id;
-            }
-            any_node = list_next(any_node);
-        }
-        /* No tasks at all - this is a real error */
+    list_node_t **cursor = &kcb->rr_cursors[top_prio_level];
+    list_t *rq = kcb->ready_queues[top_prio_level];
+    if (unlikely(!rq || !*cursor))
         panic(ERR_NO_TASKS);
-    }
+
+    /* Update next task with top priority cursor */
+    kcb->task_current = *cursor;
+
+    /* Advance top priority cursor to next task node */
+    *cursor = list_cnext(rq, *cursor);
+
+    /* Update new task properties */
+    tcb_t *new_task = kcb->task_current->data;
+    new_task->time_slice = get_priority_timeslice(new_task->prio_level);
+    new_task->state = TASK_RUNNING;
+
+    if (kcb->task_current)
+        return new_task->id;
 
     /* In cooperative mode, having no ready tasks is an error */
     panic(ERR_NO_TASKS);
