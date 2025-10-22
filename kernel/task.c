@@ -765,8 +765,15 @@ int32_t mo_task_spawn(void *task_entry, uint16_t stack_size_req)
     tcb->id = kcb->next_tid++;
     kcb->task_count++; /* Cached count of active tasks for quick access */
 
-    if (!kcb->task_current)
-        kcb->task_current = node;
+    /* Binding ready queue node */
+    tcb->rq_node.data = tcb;
+
+    /* Push node to ready queue */
+    sched_enqueue_task(tcb);
+    if (!kcb->task_current) {
+        kcb->task_current = kcb->harts->rr_cursors[tcb->prio_level];
+        tcb->state = TASK_RUNNING;
+    }
 
     CRITICAL_LEAVE();
 
@@ -780,7 +787,6 @@ int32_t mo_task_spawn(void *task_entry, uint16_t stack_size_req)
 
     /* Add to cache and mark ready */
     cache_task(tcb->id, tcb);
-    sched_enqueue_task(tcb);
 
     return tcb->id;
 }
