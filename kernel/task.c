@@ -469,6 +469,14 @@ static void sched_idle(void)
         mo_task_wfi();
 }
 
+/* Switch to idle task and return idle task id */
+static inline tcb_t *sched_switch_to_idle(void)
+{
+    kcb->task_current = &kcb->task_idle;
+    tcb_t *idle = kcb->task_idle.data;
+    idle->state = TASK_RUNNING;
+    return idle;
+}
 
 /* Efficient Round-Robin Task Selection with O(n) Complexity
  *
