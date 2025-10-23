@@ -27,7 +27,7 @@ int32_t main(void)
      * This ensures a valid entry point before any real task runs.
      */
     idle_task_init();
-    kcb->task_current = kcb->harts->task_idle;
+    kcb->task_current = &kcb->task_idle;
 
     /* Call the application's main entry point to create initial tasks. */
     kcb->preemptive = (bool) app_main();
