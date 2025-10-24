@@ -31,6 +31,11 @@ static kcb_t kernel_state = {
 };
 kcb_t *kcb = &kernel_state;
 
+/* Bitmap operation */
+#define BITMAP_CHECK(prio) (kcb->ready_bitmap & 1U << prio)
+#define BITMAP_SET(prio) (kcb->ready_bitmap |= 1U << prio)
+#define BITMAP_CLEAN(prio) (kcb->ready_bitmap &= ~(1U << prio))
+
 /* timer work management for reduced latency */
 static volatile uint32_t timer_work_pending = 0;    /* timer work types */
 static volatile uint32_t timer_work_generation = 0; /* counter for coalescing */
