@@ -38,6 +38,18 @@ kcb_t *kcb = &kernel_state;
  */
 volatile bool scheduler_started = false;
 
+/* Bitmap functions */
+
+static inline void bitmap_set(uint8_t prio_level)
+{
+    kcb->ready_bitmap |= (1U << prio_level);
+}
+
+static inline void bitmap_clean(uint8_t prio_level)
+{
+    kcb->ready_bitmap &= ~(1U << prio_level);
+}
+
 /* timer work management for reduced latency */
 static volatile uint32_t timer_work_pending = 0;    /* timer work types */
 static volatile uint32_t timer_work_generation = 0; /* counter for coalescing */
