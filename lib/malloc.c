@@ -140,7 +140,7 @@ static inline void split_block(memblock_t *block, size_t size)
     size_t remaining;
     memblock_t *new_block;
 
-    if (unlikely(size >= GET_SIZE(block))) {
+    if (unlikely(size > GET_SIZE(block))) {
         panic(ERR_HEAP_CORRUPT);
         return;
     }
