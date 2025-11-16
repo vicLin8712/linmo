@@ -35,6 +35,9 @@ enum task_priorities {
     TASK_PRIO_IDLE = 0xFFFF      /* runs when nothing else ready (level 7) */
 };
 
+/* Static data */
+extern uint32_t schedule_time, schedule_cnt, each_schedule_time;
+
 /* Task Lifecycle States */
 enum task_states {
     TASK_STOPPED,  /* Task created but not yet scheduled */

@@ -38,6 +38,8 @@ CFLAGS += -O2 -std=gnu99
 CFLAGS += $(ARCH_FLAGS)
 CFLAGS += -mstrict-align -ffreestanding -nostdlib -fomit-frame-pointer
 CFLAGS += $(INC_DIRS) $(DEFINES) -fdata-sections -ffunction-sections
+CFLAGS += $(TEST_FLAGS)
+CFLAGS += $(TEST_SCENARIO)
 
 ifeq ($(CC_IS_CLANG),1)
     CC    = $(CROSS_COMPILE)clang
