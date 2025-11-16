@@ -481,8 +481,59 @@ void _sched_block_enqueue(tcb_t *blocked_task)
  * - Priority-aware: highest non-empty ready queue is chosen via bitmap lookup.
  * - Each priority level maintains its own rr_cursor to ensure fair rotation.
  */
-uint16_t sched_select_next_task(void)
+uint32_t schedule_time = 0, schedule_cnt = 0, each_schedule_time = 0;
+uint16_t sched_select_next_task_old(void)
 {
+    uint64_t u = _read_us();
+    schedule_cnt++;
+    if (unlikely(!kcb->task_current || !kcb->task_current->data))
+        return -1;
+
+    tcb_t *current_task = kcb->task_current->data;
+
+    /* Mark current task as ready if it was running */
+    if (current_task->state == TASK_RUNNING)
+        current_task->state = TASK_READY;
+
+    /* Round-robin search: find next ready task in the master task list */
+    list_node_t *start_node = kcb->task_current;
+    list_node_t *node = start_node;
+    int iterations = 0; /* Safety counter to prevent infinite loops */
+
+    do {
+        /* Move to next task (circular) */
+        node = list_cnext(kcb->tasks, node);
+        if (!node || !node->data)
+            continue;
+
+        tcb_t *task = node->data;
+
+        /* Skip non-ready tasks */
+        if (task->state != TASK_READY)
+            continue;
+
+        /* Found a ready task */
+        kcb->task_current = node;
+        task->state = TASK_RUNNING;
+        task->time_slice = get_priority_timeslice(task->prio_level);
+
+        /* Update static data */
+        each_schedule_time = _read_us() - u;
+        schedule_time += each_schedule_time;
+
+        return task->id;
+
+    } while (node != start_node && ++iterations < 1000);
+
+    return -1;
+}
+
+uint16_t sched_select_next_task_new(void)
+{
+    /* Static data */
+    uint64_t u = _read_us();
+    schedule_cnt++;
+
     if (unlikely(!kcb->task_current || !kcb->task_current->data))
         panic(ERR_NO_TASKS);
 
@@ -519,12 +570,25 @@ uint16_t sched_select_next_task(void)
     new_task->time_slice = get_priority_timeslice(new_task->prio_level);
     new_task->state = TASK_RUNNING;
 
+    /* Update static data */
+    each_schedule_time = _read_us() - u;
+    schedule_time += each_schedule_time;
+
     if (kcb->task_current)
         return new_task->id;
 
     /* In cooperative mode, having no ready tasks is an error */
     panic(ERR_NO_TASKS);
     return 0;
+}
+
+uint16_t sched_select_next_task(void)
+{
+#if OLD
+    return sched_select_next_task_old();
+#else
+    return sched_select_next_task_new();
+#endif
 }
 
 /* Default real-time scheduler stub. */
