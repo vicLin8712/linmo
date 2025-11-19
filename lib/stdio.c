@@ -129,11 +129,15 @@ static int toint(const char **s)
     return i;
 }
 
-/* Emits a single character and increments the total character count. */
-static inline void printchar(char **str, int32_t c, int *len)
+/* Emits a single character and increments the total character count.
+ * Bounds-aware version: only writes if within buffer limits.
+ * Always increments len to track total chars that would be written (C99).
+ */
+static inline void printchar_bounded(char **str, char *end, int32_t c, int *len)
 {
     if (str) {
-        **str = c;
+        if (*str < end)
+            **str = c;
         ++(*str);
     } else if (c) {
         _putchar(c);
@@ -141,63 +145,76 @@ static inline void printchar(char **str, int32_t c, int *len)
     (*len)++;
 }
 
-/* Main formatted string output function. */
-static int vsprintf(char **buf, const char *fmt, va_list args)
+/* Supports: %s %d %u %x %p (no floating point).
+ * Returns: Number of chars that would be written (C99 semantics).
+ * NOTE: Does NOT include null terminator in return count.
+ *
+ * Deviations from C99:
+ * - Limited format specifier support (no %f, %e, %g, etc.)
+ * - No precision or complex width modifiers
+ * - Simplified %p format (basic hex without "0x" prefix handling)
+ *
+ * ISR-Safe: No malloc, no blocking, reentrant, bounded execution time.
+ */
+int vsnprintf(char *str, size_t size, const char *fmt, va_list args)
 {
-    char **p = buf;
-    const char *str;
+    char *end = (size > 0) ? (str + size - 1) : str;
+    const char *s;
     char pad;
     int width;
     int base;
     int sign;
     int i;
     long num;
-    int len = 0;
+    int len = 0; /* Total chars that would be written (excluding null) */
     char tmp[32];
 
-    /* The digits string for number conversion. */
+    /* C99 semantics: allow NULL str if size is 0 (for size calculation) */
+    if (!str && size != 0)
+        return -1;
+
     const char *digits = "0123456789abcdef";
 
-    /* Iterate through the format string. */
+    /* Iterate through the format string */
     for (; *fmt; fmt++) {
         if (*fmt != '%') {
-            printchar(p, *fmt, &len);
+            printchar_bounded(&str, end, *fmt, &len);
             continue;
         }
         /* Process format specifier: '%' */
-        ++fmt; /* Move past '%'. */
+        ++fmt; /* Move past '%' */
 
-        /* Get flags: padding character. */
-        pad = ' '; /* Default padding is space. */
+        /* Get flags: padding character */
+        pad = ' '; /* Default padding is space */
         if (*fmt == '0') {
             pad = '0';
             fmt++;
         }
-        /* Get width: minimum field width. */
+        /* Get width: minimum field width */
         width = -1;
         if (isdigit(*fmt))
             width = toint(&fmt);
 
-        base = 10; /* Default base for numbers is decimal. */
-        sign = 0;  /* Default is unsigned. */
+        base = 10; /* Default base for numbers is decimal */
+        sign = 0;  /* Default is unsigned */
 
-        /* Handle format specifiers. */
+        /* Handle format specifiers */
         switch (*fmt) {
         case 'c': /* Character */
-            printchar(p, (char) va_arg(args, int), &len);
+            printchar_bounded(&str, end, (char) va_arg(args, int), &len);
             continue;
         case 's': /* String */
-            str = va_arg(args, char *);
-            if (str == 0) /* Handle NULL string. */
-                str = "<NULL>";
+            s = va_arg(args, char *);
+            if (s == 0) /* Handle NULL string */
+                s = "<NULL>";
 
-            /* Print string, respecting width. */
-            for (; *str && width != 0; str++, width--)
-                printchar(p, *str, &len);
+            /* Print string, respecting width */
+            for (; *s && width != 0; s++, width--)
+                printchar_bounded(&str, end, *s, &len);
 
-            /* Pad if necessary. */
+            /* Pad if necessary */
             while (width-- > 0)
-                printchar(p, pad, &len);
+                printchar_bounded(&str, end, pad, &len);
             continue;
         case 'l': /* Long integer modifier */
             fmt++;
@@ -217,20 +234,23 @@ static int vsprintf(char **buf, const char *fmt, va_list args)
         case 'p': /* Pointer address (hex) */
             base = 16;
             num = va_arg(args, size_t);
-            width = sizeof(size_t);
+            width = sizeof(size_t) * 2; /* 2 hex digits per byte */
             break;
-        default: /* Unknown format specifier, ignore. */
+        case '%': /* Literal '%' */
+            printchar_bounded(&str, end, '%', &len);
+            continue;
+        default: /* Unknown format specifier, ignore */
             continue;
         }
 
-        /* Handle sign for signed integers. */
+        /* Handle sign for signed integers */
         if (sign && num < 0) {
             num = -num;
-            printchar(p, '-', &len);
+            printchar_bounded(&str, end, '-', &len);
             width--;
         }
 
-        /* Convert number to string (in reverse order). */
+        /* Convert number to string (in reverse order) */
         i = 0;
         if (num == 0)
             tmp[i++] = '0';
@@ -241,40 +261,61 @@ static int vsprintf(char **buf, const char *fmt, va_list args)
                 tmp[i++] = digits[divide(&num, base)];
         }
 
-        /* Pad with leading characters if width is specified. */
+        /* Pad with leading characters if width is specified */
         width -= i;
         while (width-- > 0)
-            printchar(p, pad, &len);
+            printchar_bounded(&str, end, pad, &len);
 
-        /* Print the number string in correct order. */
+        /* Print the number string in correct order */
         while (i-- > 0)
-            printchar(p, tmp[i], &len);
+            printchar_bounded(&str, end, tmp[i], &len);
     }
-    printchar(p, '\0', &len);
+
+    /* Always null-terminate within bounds (C99 requirement) */
+    if (size > 0) {
+        if (str <= end)
+            *str = '\0';
+        else
+            *end = '\0';
+    }
+
+    /* Return total chars that would be written (C99 semantics),
+     * NOT including the null terminator.
+     */
+    return len;
+}
+
+/* Formatted output to stdout.
+ * Uses a fixed stack buffer - very long output will be truncated.
+ */
+int32_t printf(const char *fmt, ...)
+{
+    char buf[256]; /* Stack buffer for formatted output */
+    va_list args;
+
+    va_start(args, fmt);
+    int32_t len = vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    /* Output the formatted string to stdout */
+    char *p = buf;
+    while (*p)
+        _putchar(*p++);
 
     return len;
 }
 
-/* Formatted output to stdout. */
-int32_t printf(const char *fmt, ...)
+/* Formatted output to a bounded string buffer (C99).
+ * Guarantees null termination if size > 0.
+ * Returns total chars that would be written (excluding null terminator).
+ */
+int32_t snprintf(char *str, size_t size, const char *fmt, ...)
 {
     va_list args;
     int32_t v;
 
     va_start(args, fmt);
-    v = vsprintf(0, fmt, args);
-    va_end(args);
-    return v;
-}
-
-/* Formatted output to a string. */
-int32_t sprintf(char *out, const char *fmt, ...)
-{
-    va_list args;
-    int32_t v;
-
-    va_start(args, fmt);
-    v = vsprintf(&out, fmt, args);
+    v = vsnprintf(str, size, fmt, args);
     va_end(args);
     return v;
 }

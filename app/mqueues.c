@@ -36,7 +36,7 @@ void task1(void)
         /* Prepare and enqueue second message (string payload) for task 3. */
         pmsg = &msg2;
 
-        sprintf(str, "hello %d from t1...", val++);
+        snprintf(str, sizeof(str), "hello %d from t1...", val++);
         /* Enqueue the string. The payload points to the local 'str' buffer. */
         pmsg->payload = str;          /* Point payload to the string buffer. */
         pmsg->size = strlen(str) + 1; /* Store string size. */

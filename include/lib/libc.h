@@ -8,6 +8,7 @@
  */
 
 #include <hal.h>
+#include <stdarg.h> /* For va_list in vsnprintf declaration */
 
 /* Basic Type Definitions */
 #ifndef NULL
@@ -149,4 +150,5 @@ char *getline(char *s);
 
 /* Formatted output */
 int32_t printf(const char *fmt, ...);
-int32_t sprintf(char *out, const char *fmt, ...);
+int32_t snprintf(char *str, size_t size, const char *fmt, ...);
+int vsnprintf(char *str, size_t size, const char *fmt, va_list args);
