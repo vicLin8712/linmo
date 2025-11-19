@@ -1,5 +1,6 @@
 #include <hal.h>
 #include <lib/libc.h>
+#include <sys/logger.h>
 #include <sys/task.h>
 
 #include "private/error.h"
@@ -22,6 +23,17 @@ int32_t main(void)
     mo_heap_init((void *) &_heap_start, (size_t) &_heap_size);
     printf("Heap initialized, %u bytes available\n",
            (unsigned int) (size_t) &_heap_size);
+
+    /* Initialize deferred logging system.
+     * Must be done after heap init but before app_main() to ensure
+     * application tasks can use thread-safe printf.
+     * Note: Early printf calls (above) use direct output fallback.
+     */
+    if (mo_logger_init() != 0) {
+        printf("Warning: Logger initialization failed, using direct output\n");
+    } else {
+        printf("Logger initialized\n");
+    }
 
     /* Call the application's main entry point to create initial tasks. */
     kcb->preemptive = (bool) app_main();

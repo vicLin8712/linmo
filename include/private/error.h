@@ -26,7 +26,7 @@ enum {
     ERR_NOT_OWNER,          /* Operation requires ownership */
 
     /* Memory Protection Errors */
-    ERR_STACK_CHECK, /* Stack overflow or corruption detected */
+    ERR_STACK_CHECK,  /* Stack overflow or corruption detected */
     ERR_HEAP_CORRUPT, /* Heap corruption or invalid free detected */
 
     /* IPC and Synchronization Errors */
