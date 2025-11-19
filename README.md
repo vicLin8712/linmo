@@ -1,5 +1,10 @@
 # Linmo: A Simple Multi-tasking Operating System Kernel
-```
+
+<div align="left">
+<img src="Documentation/logo.png" alt="Linmo Logo" />
+</div>
+
+<!--- Linmo logo source (regenerate with: scripts/generate-logo.sh)
       ▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▖
       ▐██████████████
       ▐█████▜▆▆▛█████
@@ -11,12 +16,12 @@
     ▜▖▜▌╺▄▃▄╸ ┓╺▄▄━ █▋▟▍      ▐█▋   ▅▏ ██▍  ▐▋  ▜██▌      █▏ ███ ▐█▋ ▐█▙    ▟█▘
     ▐▛▀▊      ▝    ▕█▀█      ▗▟██▅▅▇▛ ▅██▙▖▗▟█▖  ▝█▌     ▅█▅ ▝█▘╶▟██▖ ▝▜▇▅▄▇▀▘
     ▝▙▅█▖   ▀━┷▘   ▟█▅▛
-    ▗██▌█▖ ╺━▇▇━  ▄▊▜█▉                 ▆▍                       ▕▆
-   ▗██▛▗█▛▅▂▝▀▀▁▃▇██▝██▙                █▍▅▛ ▗▆▀▜▅ ▇▆▀▕▇┻▀▆ ▗▇▀▇▖▕█
-  ▄███▇██▎ ▀▀▀▀▀▔ ▐█████▙▁              █▛▜▄ ▜█▀▜▉ █▎ ▕█▏ █▎▜▛▀▜▉▕█
-  ▀▀▔▔▜▄▀▜▅▄▂▁▁▃▄▆▀▚▟▀▔▀▀▘              ▀▘ ▀▘ ▀▀▀▔ ▀   ▀  ▀  ▀▀▀▔ ▀
+    ▗██▌█▖ ╺━▇▇━  ▄▊▜█▉
+   ▗██▛▗█▛▅▂▝▀▀▁▃▇██▝██▙
+  ▄███▇██▎ ▀▀▀▀▀▔ ▐█████▙
+  ▀▀▔▔▜▄▀▜▅▄▂▁▁▃▄▆▀▚▟▀▔▀▀▘
        ▝▀▆▄▃████▃▄▆▀▔
-```
+-->
 
 Linmo is a preemptive, multi-tasking operating system kernel built as an educational showcase for resource-constrained systems.
 It offers a lightweight environment where all tasks share a single address space,
