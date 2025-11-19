@@ -18,7 +18,7 @@ void task1(void)
     ptr->b = -555;
 
     while (1) {
-        sprintf(ptr->v, "hello %ld", i++);
+        snprintf(ptr->v, sizeof(ptr->v), "hello %ld", i++);
         ptr->a++;
         ptr->b++;
 

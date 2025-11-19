@@ -7,7 +7,7 @@ void task2(void)
     char data2[64];
 
     while (1) {
-        sprintf(data2, "Hello from task 2!");
+        snprintf(data2, sizeof(data2), "Hello from task 2!");
         /* write pipe - write size must be less than buffer size */
         mo_pipe_write(pipe2, data2, strlen((char *) data2));
     }
@@ -18,7 +18,7 @@ void task1(void)
     char data1[64];
 
     while (1) {
-        sprintf(data1, "Hello from task 1!");
+        snprintf(data1, sizeof(data1), "Hello from task 1!");
         /* write pipe - write size must be less than buffer size */
         mo_pipe_write(pipe1, data1, strlen((char *) data1));
     }
