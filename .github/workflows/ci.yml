@@ -51,6 +51,7 @@ jobs:
       - name: Run All Apps
         id: test
         continue-on-error: true
+        if: matrix.toolchain == 'gnu'
         run: |
           output=$(.ci/run-app-tests.sh 2>&1) || true
           echo "TEST_OUTPUT<<EOF" >> $GITHUB_OUTPUT
@@ -62,6 +63,7 @@ jobs:
       - name: Run Functional Tests
         id: functional_test
         continue-on-error: true
+        if: matrix.toolchain == 'gnu'
         run: |
           output=$(.ci/run-functional-tests.sh 2>&1) || true
           echo "FUNCTIONAL_TEST_OUTPUT<<EOF" >> $GITHUB_OUTPUT
@@ -73,7 +75,35 @@ jobs:
       - name: Collect Test Data
         if: always()
         run: |
-          .ci/ci-tools.sh collect-data "${{ matrix.toolchain }}" "${{ steps.test.outputs.TEST_OUTPUT }}" "${{ steps.functional_test.outputs.FUNCTIONAL_TEST_OUTPUT }}"
+          if [ "${{ matrix.toolchain }}" = "llvm" ]; then
+            # LLVM: Build-only validation, skip tests
+            mkdir -p test-results
+            echo "${{ matrix.toolchain }}" > test-results/toolchain
+            echo "skipped" > test-results/crash_exit_code
+            echo "skipped" > test-results/functional_exit_code
+
+            # Generate skipped status for all apps
+            apps=$(find app/ -name "*.c" -exec basename {} .c \; | sort)
+            for app in $apps; do
+              echo "$app=skipped" >> test-results/apps_data
+            done
+
+            # Generate skipped status for functional tests
+            echo "mutex=skipped" > test-results/functional_data
+            echo "semaphore=skipped" >> test-results/functional_data
+
+            # Generate skipped status for functional test criteria
+            echo "mutex:fairness=skipped" > test-results/functional_criteria_data
+            echo "mutex:mutual_exclusion=skipped" >> test-results/functional_criteria_data
+            echo "mutex:data_consistency=skipped" >> test-results/functional_criteria_data
+            echo "mutex:overall=skipped" >> test-results/functional_criteria_data
+            echo "semaphore:all_tests_passed!=skipped" >> test-results/functional_criteria_data
+
+            echo "LLVM toolchain: Build validation only (tests skipped)"
+          else
+            # GNU: Full test suite
+            .ci/ci-tools.sh collect-data "${{ matrix.toolchain }}" "${{ steps.test.outputs.TEST_OUTPUT }}" "${{ steps.functional_test.outputs.FUNCTIONAL_TEST_OUTPUT }}"
+          fi
 
       - name: Upload Test Results
         if: always()

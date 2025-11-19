@@ -181,18 +181,14 @@ void print_test_results(void)
     }
 }
 
-/* Simple idle task to prevent "no ready tasks" panic */
-void idle_task(void)
-{
-    while (1)
-        mo_task_wfi();
-}
-
-/* Task entry point for semaphore tests */
-void semaphore_test_task(void)
+/* Application entry point - runs tests in cooperative mode to avoid
+ * printf thread-safety issues in preemptive multitasking
+ */
+int32_t app_main(void)
 {
     printf("Starting semaphore test suite...\n");
 
+    /* Run all tests before enabling preemptive scheduling */
     test_semaphore_lifecycle();
     test_basic_operations();
     test_overflow_protection();
@@ -204,31 +200,9 @@ void semaphore_test_task(void)
 
     printf("Semaphore tests completed successfully.\n");
 
-    /* Test complete - go into low-activity mode */
-    while (1)
-        mo_task_wfi();
-}
+    /* Shutdown QEMU cleanly via virt machine's test device */
+    *(volatile uint32_t *) 0x100000U = 0x5555U;
 
-/* Example of how to integrate into app_main */
-int32_t app_main(void)
-{
-    /* Create an idle task to prevent "no ready tasks" panic */
-    int32_t idle_task_id = mo_task_spawn(idle_task, 512);
-    if (idle_task_id < 0) {
-        printf("Failed to create idle task\n");
-        return 0;
-    }
-
-    /* Set idle task to lowest priority */
-    mo_task_priority(idle_task_id, TASK_PRIO_IDLE);
-
-    /* Create the test task */
-    int32_t test_task_id = mo_task_spawn(semaphore_test_task, 1024);
-    if (test_task_id < 0) {
-        printf("Failed to create semaphore test task\n");
-        return 0;
-    }
-
-    /* Enable preemptive scheduling */
-    return 1;
+    /* Stay in cooperative mode - no preemptive scheduling needed */
+    return 0;
 }

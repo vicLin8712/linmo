@@ -19,8 +19,15 @@ DEFINES := -DF_CPU=$(F_CLK) \
 
 CROSS_COMPILE ?= riscv-none-elf-
 
-# Detect LLVM/Clang toolchain (allow user override)
-CC_IS_CLANG ?= $(shell $(CROSS_COMPILE)clang --version 2>/dev/null | grep -qi clang && echo 1)
+# Detect LLVM/Clang toolchain
+# Priority: TOOLCHAIN_TYPE env var > CC_IS_CLANG var > auto-detection
+ifeq ($(TOOLCHAIN_TYPE),llvm)
+    CC_IS_CLANG := 1
+    # Export for sub-makes
+    export TOOLCHAIN_TYPE
+else
+    CC_IS_CLANG ?= $(shell $(CROSS_COMPILE)clang --version 2>/dev/null | grep -qi clang && echo 1)
+endif
 
 # Architecture flags
 ARCH_FLAGS = -march=rv32imzicsr -mabi=ilp32

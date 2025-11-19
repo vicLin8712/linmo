@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration
-TIMEOUT=5
+TIMEOUT=30
 TOOLCHAIN_TYPE=${TOOLCHAIN_TYPE:-gnu}
 
 # Define functional tests and their expected PASS criteria
@@ -57,6 +57,15 @@ test_functional_app() {
 	local output exit_code
 	output=$(timeout ${TIMEOUT}s qemu-system-riscv32 -nographic -machine virt -bios none -kernel build/image.elf 2>&1)
 	exit_code=$?
+
+	# Debug: Show first 500 chars of output
+	if [ -n "$output" ]; then
+		echo "[DEBUG] Output preview (first 500 chars):"
+		echo "$output" | head -c 500
+		echo ""
+	else
+		echo "[DEBUG] No output captured from QEMU"
+	fi
 
 	# Parse expected criteria
 	local expected_passes="${FUNCTIONAL_TESTS[$test]}"

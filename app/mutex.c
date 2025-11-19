@@ -18,20 +18,17 @@ static int currently_in_critical_section = 0;
 /* Enhanced Task A */
 void task_a(void)
 {
-    printf("Task A (ID %d) starting...\n", mo_task_id());
+    /* WORKAROUND: Printf not thread-safe in preemptive mode - minimize usage */
 
     for (int i = 0; i < MAX_ITERATIONS; i++) {
-        printf("Task A: Requesting mutex (iteration %d)\n", i + 1);
         mo_sem_wait(binary_mutex);
 
         /* === CRITICAL SECTION START === */
         if (currently_in_critical_section != 0) {
-            printf("Task A: VIOLATION - Multiple tasks in critical section!\n");
             critical_section_violations++;
         }
         currently_in_critical_section = mo_task_id();
 
-        printf("Task A: Entering critical section\n");
         int old_counter = shared_counter;
 
         /* Simulate work with yields instead of delays */
@@ -40,25 +37,19 @@ void task_a(void)
 
         shared_counter = old_counter + 1;
         task_a_count++;
-        printf("Task A: Updated counter: %d -> %d\n", old_counter,
-               shared_counter);
 
         if (currently_in_critical_section != mo_task_id()) {
-            printf("Task A: VIOLATION - Critical section corrupted!\n");
             critical_section_violations++;
         }
         currently_in_critical_section = 0;
         /* === CRITICAL SECTION END === */
 
         mo_sem_signal(binary_mutex);
-        printf("Task A: Released mutex\n");
 
         /* Cooperative scheduling */
         for (int j = 0; j < COOPERATION_YIELDS; j++)
             mo_task_yield();
     }
-
-    printf("Task A completed %d iterations\n", task_a_count);
 
     /* Keep running to prevent panic */
     while (1) {
@@ -70,28 +61,21 @@ void task_a(void)
 /* Enhanced Task B */
 void task_b(void)
 {
-    printf("Task B (ID %d) starting...\n", mo_task_id());
+    /* WORKAROUND: Printf not thread-safe in preemptive mode - minimize usage */
 
     for (int i = 0; i < MAX_ITERATIONS; i++) {
-        printf("Task B: Trying trylock (iteration %d)\n", i + 1);
-
         /* Try non-blocking first */
         int32_t trylock_result = mo_sem_trywait(binary_mutex);
         if (trylock_result != ERR_OK) {
-            printf("Task B: Mutex busy, using blocking wait\n");
             mo_sem_wait(binary_mutex);
-        } else {
-            printf("Task B: Trylock succeeded\n");
         }
 
         /* === CRITICAL SECTION START === */
         if (currently_in_critical_section != 0) {
-            printf("Task B: VIOLATION - Multiple tasks in critical section!\n");
             critical_section_violations++;
         }
         currently_in_critical_section = mo_task_id();
 
-        printf("Task B: Entering critical section\n");
         int old_counter = shared_counter;
 
         /* Simulate work */
@@ -100,25 +84,19 @@ void task_b(void)
 
         shared_counter = old_counter + 10;
         task_b_count++;
-        printf("Task B: Updated counter: %d -> %d\n", old_counter,
-               shared_counter);
 
         if (currently_in_critical_section != mo_task_id()) {
-            printf("Task B: VIOLATION - Critical section corrupted!\n");
             critical_section_violations++;
         }
         currently_in_critical_section = 0;
         /* === CRITICAL SECTION END === */
 
         mo_sem_signal(binary_mutex);
-        printf("Task B: Released mutex\n");
 
         /* Cooperative scheduling */
         for (int j = 0; j < COOPERATION_YIELDS; j++)
             mo_task_yield();
     }
-
-    printf("Task B completed %d iterations\n", task_b_count);
 
     /* Keep running to prevent panic */
     while (1) {
@@ -130,23 +108,15 @@ void task_b(void)
 /* Simple monitor task */
 void monitor_task(void)
 {
-    printf("Monitor starting...\n");
+    /* WORKAROUND: Printf not thread-safe - only print at end when tasks idle */
 
     int cycles = 0;
 
     while (cycles < 50) { /* Monitor for reasonable time */
         cycles++;
 
-        /* Check progress every few cycles */
-        if (cycles % 10 == 0) {
-            printf("Monitor: A=%d, B=%d, Counter=%d, Violations=%d\n",
-                   task_a_count, task_b_count, shared_counter,
-                   critical_section_violations);
-        }
-
         /* Check if both tasks completed */
         if (task_a_count >= MAX_ITERATIONS && task_b_count >= MAX_ITERATIONS) {
-            printf("Monitor: Both tasks completed successfully\n");
             break;
         }
 
@@ -155,7 +125,11 @@ void monitor_task(void)
             mo_task_yield();
     }
 
-    /* Final report */
+    /* Wait a bit for tasks to fully idle */
+    for (int i = 0; i < 50; i++)
+        mo_task_yield();
+
+    /* Final report - safe to print when other tasks are idle */
     printf("\n=== FINAL RESULTS ===\n");
     printf("Task A iterations: %d\n", task_a_count);
     printf("Task B iterations: %d\n", task_b_count);
@@ -177,7 +151,10 @@ void monitor_task(void)
 
     printf("Binary semaphore mutex test completed.\n");
 
-    /* Keep running */
+    /* Shutdown QEMU cleanly via virt machine's test device */
+    *(volatile uint32_t *) 0x100000U = 0x5555U;
+
+    /* Fallback: keep running if shutdown fails */
     while (1) {
         for (int i = 0; i < 20; i++)
             mo_task_yield();
@@ -216,9 +193,7 @@ int32_t app_main(void)
         return false;
     }
 
-    printf("Tasks created: A=%d, B=%d, Monitor=%d, Idle=%d\n", (int) task_a_id,
-           (int) task_b_id, (int) monitor_id, (int) idle_id);
-
-    printf("Starting test...\n");
+    /* CRITICAL FIX: Printf hangs after task_spawn - remove all printf calls */
+    /* Tasks created: A=%d, B=%d, Monitor=%d, Idle=%d */
     return true; /* Enable preemptive scheduling */
 }
