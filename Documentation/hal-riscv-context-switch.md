@@ -48,8 +48,9 @@ typedef uint32_t jmp_buf[17];
 The `hal_context_save` function captures complete task state including both execution context and processor state.
 The function saves all callee-saved registers as required by the RISC-V ABI,
 plus essential pointers (gp, tp, sp, ra).
-For processor state, it performs sophisticated interrupt state reconstruction and ensures that tasks resume with correct interrupt state,
-maintaining system responsiveness and preventing interrupt state corruption.
+For processor state, it saves `mstatus` as-is, preserving the exact processor state at the time of the context switch.
+The RISC-V hardware automatically manages the `mstatus.MIE` and `mstatus.MPIE` stack during trap entry and `MRET`,
+ensuring correct interrupt state restoration per the RISC-V Privileged Specification.
 
 ### 2. Select Next Task
 The scheduler, invoked via `dispatcher()` during machine timer interrupts,
@@ -69,19 +70,30 @@ This ordering ensures that interrupt state and privilege mode are correctly esta
 
 ## Processor State Management
 
-### Interrupt State Reconstruction
-The HAL context switching routines include sophisticated interrupt state management that handles the complexities of RISC-V interrupt processing:
+### Hardware-Managed Interrupt State
+The HAL context switching routines follow the RISC-V Privileged Specification for interrupt state management,
+allowing hardware to automatically manage the interrupt enable stack:
 
-During Timer Interrupts:
-- `mstatus.MIE` is automatically cleared by hardware when entering the trap
-- `mstatus.MPIE` preserves the previous interrupt enable state
-- HAL functions reconstruct the original interrupt state from `MPIE`
-- This ensures consistent interrupt behavior across context switches
+During Trap Entry (Hardware Automatic per RISC-V Spec §3.1.6.1):
+- `mstatus.MPIE ← mstatus.MIE` (preserve interrupt enable state)
+- `mstatus.MIE ← 0` (disable interrupts during trap handling)
+- `mstatus.MPP ← current_privilege` (preserve privilege mode)
+
+During MRET (Hardware Automatic):
+- `mstatus.MIE ← mstatus.MPIE` (restore interrupt enable state)
+- `mstatus.MPIE ← 1` (reset to default enabled)
+- `privilege ← mstatus.MPP` (return to saved privilege)
+
+HAL Context Switch Behavior:
+- `hal_context_save` saves `mstatus` exactly as observed (no manual bit manipulation)
+- `hal_context_restore` restores `mstatus` exactly as saved
+- Hardware manages the `MIE`/`MPIE` stack automatically during nested traps
+- This ensures spec-compliant behavior and correct interrupt state across all scenarios
 
 State Preservation:
-- Each task maintains its own interrupt enable state
+- Each task maintains its own complete `mstatus` value
 - Context switches preserve privilege mode (Machine mode for kernel tasks)
-- Interrupt state is reconstructed accurately for reliable task resumption
+- Nested interrupts are handled correctly by hardware's automatic state stacking
 
 ### Task Initialization
 New tasks are initialized with proper processor state:

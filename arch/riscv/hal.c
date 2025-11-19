@@ -147,10 +147,10 @@ static inline uint64_t mtimecmp_r(void)
 /* Safely write to the 64-bit 'mtimecmp' register on a 32-bit architecture.
  * A direct write of 'lo' then 'hi' could trigger a spurious interrupt if the
  * timer happens to cross the new 'lo' value before 'hi' is updated.
- * To prevent this, we first set the low word to an impassable value (all 1s),
- * then set the high word, and finally set the correct low word. This ensures
- * the full 64-bit compare value becomes active atomically from the timer's
- * perspective.
+ * To prevent this, the implementation first sets the low word to an impassable
+ * value (all 1s), then sets the high word, and finally sets the correct low
+ * word. This ensures the full 64-bit compare value becomes active atomically
+ * from the timer's perspective.
  */
 static inline void mtimecmp_w(uint64_t val)
 {
@@ -326,7 +326,7 @@ void hal_interrupt_tick(void)
 
     /* The task's entry point is still in RA, so this is its very first run */
     if ((uint32_t) task->entry == task->context[CONTEXT_RA])
-        _ei(); /* Enable global interrupts now that we are in a task */
+        _ei(); /* Enable global interrupts now that execution is in a task */
 }
 
 /* Context Switching */
@@ -438,16 +438,16 @@ int32_t hal_context_save(jmp_buf env)
         "sw  tp,  13*4(%0)\n"
         "sw  sp,  14*4(%0)\n"
         "sw  ra,  15*4(%0)\n"
-        /* Save mstatus with interrupt state reconstruction. During timer
-         * interrupts, mstatus.MIE is cleared, so we reconstruct the pre-trap
-         * state from MPIE for consistent interrupt context preservation.
+        /* Save mstatus as-is. According to RISC-V spec section 3.1.6.1,
+         * mstatus.mie and mstatus.mpie are automatically managed by hardware:
+         * - On trap entry: mpie <- mie, mie <- 0
+         * - On MRET: mie <- mpie, mpie <- 1
+         * The implementation saves the current state without manual bit
+         * manipulation, allowing hardware to correctly manage the interrupt
+         * enable stack.
          */
-        "csrr t0, mstatus\n" /* Read current mstatus (MIE=0 in trap) */
-        "andi t1, t0, ~8\n"  /* Clear MIE bit first */
-        "srli t2, t0, 4\n"   /* Get MPIE bit to position 3 */
-        "andi t2, t2, 8\n"   /* Isolate bit 3 */
-        "or   t1, t1, t2\n"  /* Combine cleared MIE with reconstructed bit */
-        "sw   t1, 16*4(%0)\n"
+        "csrr t0, mstatus\n"
+        "sw   t0, 16*4(%0)\n"
         /* By convention, the initial call returns 0 */
         "li a0, 0\n"
         :
