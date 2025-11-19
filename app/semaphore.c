@@ -175,9 +175,9 @@ void print_test_results(void)
     printf("Total tests: %d\n", tests_passed + tests_failed);
 
     if (tests_failed == 0) {
-        printf("All tests PASSED!\n");
+        printf("Overall: PASS\n");
     } else {
-        printf("Some tests FAILED!\n");
+        printf("Overall: FAIL\n");
     }
 }
 

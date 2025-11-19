@@ -8,10 +8,50 @@ on:
     branches:
       - main
 
+# Cancel in-progress runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege permissions
+permissions:
+  contents: read
+  actions: write  # Required for actions/cache@v4 to save/restore cache
+
 jobs:
+  # Fast-running lint job to catch formatting issues early
+  lint:
+    runs-on: ubuntu-24.04
+    name: Code Quality Checks
+    timeout-minutes: 10
+
+    env:
+      CLANG_FORMAT_VERSION: 18
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install linting tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format-${{ env.CLANG_FORMAT_VERSION }} shfmt
+
+      - name: Check code formatting
+        run: .ci/check-format.sh
+
+      - name: Check newline at end of files
+        run: .ci/check-newline.sh
+
+  # Build and test matrix - runs in parallel after lint passes
+  # NOTE: LLVM toolchain performs build-only validation (no runtime tests)
+  #       to verify cross-toolchain compilation compatibility. GNU toolchain
+  #       runs the full test suite including application and functional tests.
   matrix-tests:
     runs-on: ubuntu-24.04
     name: Test on ${{ matrix.toolchain }} toolchain
+    needs: lint
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
@@ -20,21 +60,32 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Install base dependencies
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        id: cache-toolchain
+        with:
+          path: riscv
+          key: ${{ runner.os }}-${{ matrix.toolchain }}-toolchain-${{ hashFiles('.ci/setup-toolchain.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.toolchain }}-toolchain-
+
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential qemu-system-riscv32 wget clang-format-18 shfmt
-
-      - name: Check code formatting
-        run: .ci/check-format.sh
-
-      - name: Check newline at end of files
-        run: .ci/check-newline.sh
+          sudo apt-get install -y --no-install-recommends build-essential qemu-system-riscv32 wget
 
       - name: Setup ${{ matrix.toolchain }} toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: .ci/setup-toolchain.sh ${{ matrix.toolchain }}
+
+      - name: Configure toolchain environment
+        if: steps.cache-toolchain.outputs.cache-hit == 'true'
+        run: |
+          echo "$PWD/riscv/bin" >> "$GITHUB_PATH"
+          echo "CROSS_COMPILE=riscv32-unknown-elf-" >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_TYPE=${{ matrix.toolchain }}" >> "$GITHUB_ENV"
 
       - name: Verify toolchain installation
         run: |
@@ -49,8 +100,9 @@ jobs:
 
       - name: Build Kernel
         run: |
+          set -euo pipefail
           make clean
-          make
+          make -j$(nproc)
         env:
           TOOLCHAIN_TYPE: ${{ matrix.toolchain }}
 
@@ -59,6 +111,7 @@ jobs:
         continue-on-error: true
         if: matrix.toolchain == 'gnu'
         run: |
+          set -euo pipefail
           output=$(.ci/run-app-tests.sh 2>&1) || true
           echo "TEST_OUTPUT<<EOF" >> $GITHUB_OUTPUT
           echo "$output" >> $GITHUB_OUTPUT
@@ -71,6 +124,7 @@ jobs:
         continue-on-error: true
         if: matrix.toolchain == 'gnu'
         run: |
+          set -euo pipefail
           output=$(.ci/run-functional-tests.sh 2>&1) || true
           echo "FUNCTIONAL_TEST_OUTPUT<<EOF" >> $GITHUB_OUTPUT
           echo "$output" >> $GITHUB_OUTPUT
@@ -81,6 +135,7 @@ jobs:
       - name: Collect Test Data
         if: always()
         run: |
+          set -euo pipefail
           if [ "${{ matrix.toolchain }}" = "llvm" ]; then
             # LLVM: Build-only validation, skip tests
             mkdir -p test-results
@@ -103,7 +158,7 @@ jobs:
             echo "mutex:mutual_exclusion=skipped" >> test-results/functional_criteria_data
             echo "mutex:data_consistency=skipped" >> test-results/functional_criteria_data
             echo "mutex:overall=skipped" >> test-results/functional_criteria_data
-            echo "semaphore:all_tests_passed!=skipped" >> test-results/functional_criteria_data
+            echo "semaphore:overall=skipped" >> test-results/functional_criteria_data
 
             echo "LLVM toolchain: Build validation only (tests skipped)"
           else
@@ -117,13 +172,18 @@ jobs:
         with:
           name: test-results-${{ matrix.toolchain }}
           path: test-results/
-          retention-days: 1
+          retention-days: 3
+          if-no-files-found: warn
 
   # Comprehensive test summary with detailed reporting
   test-summary:
     runs-on: ubuntu-24.04
-    needs: matrix-tests
+    needs: [lint, matrix-tests]
     if: always()
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
       - name: Checkout
@@ -136,41 +196,66 @@ jobs:
           path: all-test-results/
 
       - name: Generate Test Summary
+        id: generate_summary
         continue-on-error: true
         run: |
+          echo "Aggregating test results..."
           .ci/ci-tools.sh aggregate all-test-results test-summary.toml
-          cat test-summary.toml
+
+          if [ -f test-summary.toml ]; then
+            echo "summary_generated=true" >> $GITHUB_OUTPUT
+            echo "Test Summary:"
+            cat test-summary.toml
+          else
+            echo "summary_generated=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Warning: test-summary.toml not generated"
+          fi
 
       - name: Upload Test Summary
-        if: always()
+        if: always() && steps.generate_summary.outputs.summary_generated == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: test-summary
           path: test-summary.toml
           retention-days: 30
+          if-no-files-found: error
 
       - name: Comment PR with Formatted Summary
-        if: always() && github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request' && steps.generate_summary.outputs.summary_generated == 'true'
         continue-on-error: true
         run: |
+          echo "Posting summary to PR #${{ github.event.number }}..."
           .ci/ci-tools.sh post-comment test-summary.toml ${{ github.event.number }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Final Status Check
         run: |
+          set -euo pipefail
+          echo "=== Final CI Status Check ==="
+
           if [ ! -f test-summary.toml ]; then
-            echo "Error: test-summary.toml not found"
+            echo "❌ Error: test-summary.toml not found"
+            echo "CI infrastructure issue - check test aggregation step"
             exit 1
           fi
 
           overall_status=$(grep -A 1 '^\[summary\]' test-summary.toml | grep 'status =' | cut -d'"' -f2)
           echo "Overall test status: $overall_status"
 
+          # Extract failure details if available
+          if [ "$overall_status" != "passed" ]; then
+            echo ""
+            echo "=== Failure Details ==="
+            grep -E '(failed|error|skipped)' test-summary.toml || true
+          fi
+
           if [ "$overall_status" = "passed" ]; then
-            echo "✅ All tests passed"
+            echo ""
+            echo "✅ All tests passed successfully"
             exit 0
           else
-            echo "❌ Tests failed"
+            echo ""
+            echo "❌ Tests failed - see details above"
             exit 1
           fi

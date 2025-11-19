@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Strict error handling
+set -euo pipefail
+
 # Configuration
 TIMEOUT=30
 TOOLCHAIN_TYPE=${TOOLCHAIN_TYPE:-gnu}
@@ -7,7 +10,7 @@ TOOLCHAIN_TYPE=${TOOLCHAIN_TYPE:-gnu}
 # Define functional tests and their expected PASS criteria
 declare -A FUNCTIONAL_TESTS
 FUNCTIONAL_TESTS["mutex"]="Fairness: PASS,Mutual Exclusion: PASS,Data Consistency: PASS,Overall: PASS"
-FUNCTIONAL_TESTS["semaphore"]="All tests PASSED!"
+FUNCTIONAL_TESTS["semaphore"]="Overall: PASS"
 #FUNCTIONAL_TESTS["test64"]="Unsigned Multiply: PASS,Unsigned Divide: PASS,Signed Multiply: PASS,Signed Divide: PASS,Left Shifts: PASS,Logical Right Shifts: PASS,Arithmetic Right Shifts: PASS,Overall: PASS"
 #FUNCTIONAL_TESTS["suspend"]="Suspend: PASS,Resume: PASS,Self-Suspend: PASS,Overall: PASS"
 
@@ -37,7 +40,7 @@ test_functional_app() {
 
     # Build phase
     echo "[+] Building..."
-    make clean > /dev/null 2>&1
+    make clean > /dev/null 2>&1 || true # Clean previous build artifacts (failures ignored)
     if ! make "$test" TOOLCHAIN_TYPE="$TOOLCHAIN_TYPE" > /dev/null 2>&1; then
         echo "[!] Build failed"
 
