@@ -141,6 +141,7 @@ int random_r(struct random_data *buf, int32_t *result);
 
 /* Character and string output */
 int32_t puts(const char *str);
+int _putchar(int c); /* Low-level character output (used by logger) */
 
 /* Character and string input */
 int getchar(void);

@@ -3,10 +3,16 @@
  * Default handlers do nothing (or return error codes) so the kernel can run
  * even if the board code forgets to install real console hooks. These hooks
  * allow a consistent I/O interface regardless of the underlying hardware.
+ *
+ * Thread-safe printing:
+ * Uses deferred logging system for thread-safe output in preemptive mode.
+ * Messages are enqueued and processed by a dedicated logger task.
+ * Falls back to direct output during early boot or if queue is full.
  */
 
 #include <lib/libc.h>
 #include <stdarg.h>
+#include <sys/logger.h>
 
 #include "private/stdio.h"
 
@@ -287,6 +293,8 @@ int vsnprintf(char *str, size_t size, const char *fmt, va_list args)
 
 /* Formatted output to stdout.
  * Uses a fixed stack buffer - very long output will be truncated.
+ * Thread-safe: Uses deferred logging via logger task.
+ * Falls back to direct output during early boot or if queue is full.
  */
 int32_t printf(const char *fmt, ...)
 {
@@ -297,7 +305,13 @@ int32_t printf(const char *fmt, ...)
     int32_t len = vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    /* Output the formatted string to stdout */
+    /* Try deferred logging only if message fits (avoids silent truncation).
+     * Long messages fall back to direct output for completeness.
+     */
+    if (len <= LOG_ENTRY_SZ - 1 && mo_logger_enqueue(buf, len) == 0)
+        return len; /* Successfully enqueued */
+
+    /* Fallback to direct output (early boot, queue full, or too long) */
     char *p = buf;
     while (*p)
         _putchar(*p++);
@@ -320,12 +334,29 @@ int32_t snprintf(char *str, size_t size, const char *fmt, ...)
     return v;
 }
 
-/* Writes a string to stdout, followed by a newline. */
+/* Writes a string to stdout, followed by a newline.
+ * Thread-safe: Uses deferred logging via logger task.
+ * Falls back to direct output during early boot or if queue is full.
+ */
 int32_t puts(const char *str)
 {
-    while (*str)
-        _putchar(*str++);
-    _putchar('\n');
+    char buf[256]; /* Buffer for string + newline */
+    int len = 0;
+
+    /* Copy string to buffer */
+    while (*str && len < 254)
+        buf[len++] = *str++;
+    buf[len++] = '\n';
+    buf[len] = '\0';
+
+    /* Try deferred logging only if message fits (avoids silent truncation) */
+    if (len <= LOG_ENTRY_SZ - 1 && mo_logger_enqueue(buf, len) == 0)
+        return 0; /* Successfully enqueued */
+
+    /* Fallback to direct output (early boot, queue full, or too long) */
+    char *p = buf;
+    while (*p)
+        _putchar(*p++);
 
     return 0;
 }

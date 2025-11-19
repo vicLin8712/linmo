@@ -18,14 +18,13 @@ static int currently_in_critical_section = 0;
 /* Enhanced Task A */
 void task_a(void)
 {
-    /* WORKAROUND: Printf not thread-safe in preemptive mode - minimize usage */
-
     for (int i = 0; i < MAX_ITERATIONS; i++) {
         mo_sem_wait(binary_mutex);
 
         /* === CRITICAL SECTION START === */
         if (currently_in_critical_section != 0) {
             critical_section_violations++;
+            printf("Task A: VIOLATION detected at iteration %d\n", i);
         }
         currently_in_critical_section = mo_task_id();
 
@@ -37,9 +36,11 @@ void task_a(void)
 
         shared_counter = old_counter + 1;
         task_a_count++;
+        printf("Task A: iteration %d, counter=%d\n", i, shared_counter);
 
         if (currently_in_critical_section != mo_task_id()) {
             critical_section_violations++;
+            printf("Task A: VIOLATION on exit at iteration %d\n", i);
         }
         currently_in_critical_section = 0;
         /* === CRITICAL SECTION END === */
@@ -50,6 +51,8 @@ void task_a(void)
         for (int j = 0; j < COOPERATION_YIELDS; j++)
             mo_task_yield();
     }
+
+    printf("Task A completed all iterations\n");
 
     /* Keep running to prevent panic */
     while (1) {
@@ -61,18 +64,18 @@ void task_a(void)
 /* Enhanced Task B */
 void task_b(void)
 {
-    /* WORKAROUND: Printf not thread-safe in preemptive mode - minimize usage */
-
     for (int i = 0; i < MAX_ITERATIONS; i++) {
         /* Try non-blocking first */
         int32_t trylock_result = mo_sem_trywait(binary_mutex);
         if (trylock_result != ERR_OK) {
+            printf("Task B: trylock failed, blocking at iteration %d\n", i);
             mo_sem_wait(binary_mutex);
         }
 
         /* === CRITICAL SECTION START === */
         if (currently_in_critical_section != 0) {
             critical_section_violations++;
+            printf("Task B: VIOLATION detected at iteration %d\n", i);
         }
         currently_in_critical_section = mo_task_id();
 
@@ -84,9 +87,11 @@ void task_b(void)
 
         shared_counter = old_counter + 10;
         task_b_count++;
+        printf("Task B: iteration %d, counter=%d\n", i, shared_counter);
 
         if (currently_in_critical_section != mo_task_id()) {
             critical_section_violations++;
+            printf("Task B: VIOLATION on exit at iteration %d\n", i);
         }
         currently_in_critical_section = 0;
         /* === CRITICAL SECTION END === */
@@ -98,6 +103,8 @@ void task_b(void)
             mo_task_yield();
     }
 
+    printf("Task B completed all iterations\n");
+
     /* Keep running to prevent panic */
     while (1) {
         for (int i = 0; i < 10; i++)
@@ -108,15 +115,16 @@ void task_b(void)
 /* Simple monitor task */
 void monitor_task(void)
 {
-    /* WORKAROUND: Printf not thread-safe - only print at end when tasks idle */
-
     int cycles = 0;
+
+    printf("Monitor: Starting test monitoring\n");
 
     while (cycles < 50) { /* Monitor for reasonable time */
         cycles++;
 
         /* Check if both tasks completed */
         if (task_a_count >= MAX_ITERATIONS && task_b_count >= MAX_ITERATIONS) {
+            printf("Monitor: Both tasks completed, finalizing test\n");
             break;
         }
 
@@ -125,11 +133,11 @@ void monitor_task(void)
             mo_task_yield();
     }
 
-    /* Wait a bit for tasks to fully idle */
+    /* Wait a bit for tasks to fully complete */
     for (int i = 0; i < 50; i++)
         mo_task_yield();
 
-    /* Final report - safe to print when other tasks are idle */
+    /* Final report */
     printf("\n=== FINAL RESULTS ===\n");
     printf("Task A iterations: %d\n", task_a_count);
     printf("Task B iterations: %d\n", task_b_count);
@@ -193,7 +201,9 @@ int32_t app_main(void)
         return false;
     }
 
-    /* CRITICAL FIX: Printf hangs after task_spawn - remove all printf calls */
-    /* Tasks created: A=%d, B=%d, Monitor=%d, Idle=%d */
+    printf("Tasks created: A=%d, B=%d, Monitor=%d, Idle=%d\n", task_a_id,
+           task_b_id, monitor_id, idle_id);
+    printf("Enabling preemptive scheduling mode\n");
+
     return true; /* Enable preemptive scheduling */
 }
