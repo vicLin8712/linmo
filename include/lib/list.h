@@ -78,6 +78,24 @@ static inline list_node_t *list_cnext(const list_t *list,
 
 /* Push and pop */
 
+/* Pushback list node into list without new node memory allocation */
+static inline void list_pushback_node(list_t *list, list_node_t *target)
+{
+    if (unlikely(!list || !target || target->next))
+        return;
+
+    target->next = list->tail;
+
+    /* Insert before tail sentinel */
+    list_node_t *prev = list->head;
+    while (prev->next != list->tail)
+        prev = prev->next;
+
+    prev->next = target;
+    list->length++;
+    return;
+}
+
 static inline list_node_t *list_pushback(list_t *list, void *data)
 {
     if (unlikely(!list))
@@ -112,6 +130,25 @@ static inline void *list_pop(list_t *list)
     free(first);
     list->length--;
     return data;
+}
+
+/* Remove a node from list without freeing */
+static inline void list_remove_node(list_t *list, list_node_t *target)
+{
+    if (unlikely(!list || !target || list_is_empty(list)))
+        return;
+
+    list_node_t *prev = list->head;
+    while (prev->next != list->tail && prev->next != target)
+        prev = prev->next;
+
+    if (unlikely(prev->next != target))
+        return; /* node not found */
+
+    prev->next = target->next;
+    target->next = NULL;
+    list->length--;
+    return;
 }
 
 /* Remove a specific node; returns its data */
