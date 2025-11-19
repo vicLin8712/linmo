@@ -25,7 +25,13 @@ jobs:
       - name: Install base dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential qemu-system-riscv32 wget
+          sudo apt-get install -y build-essential qemu-system-riscv32 wget clang-format-18 shfmt
+
+      - name: Check code formatting
+        run: .ci/check-format.sh
+
+      - name: Check newline at end of files
+        run: .ci/check-newline.sh
 
       - name: Setup ${{ matrix.toolchain }} toolchain
         run: .ci/setup-toolchain.sh ${{ matrix.toolchain }}
