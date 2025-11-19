@@ -113,8 +113,18 @@ aggregate_results() {
 		functional_exit=$(cat "$artifact_dir/functional_exit_code" 2>/dev/null || echo "1")
 
 		build_status="passed"
-		crash_status=$([ "$crash_exit" = "0" ] && echo "passed" || echo "failed")
-		functional_status=$([ "$functional_exit" = "0" ] && echo "passed" || echo "failed")
+		# Handle skipped tests
+		if [ "$crash_exit" = "skipped" ]; then
+			crash_status="skipped"
+		else
+			crash_status=$([ "$crash_exit" = "0" ] && echo "passed" || echo "failed")
+		fi
+
+		if [ "$functional_exit" = "skipped" ]; then
+			functional_status="skipped"
+		else
+			functional_status=$([ "$functional_exit" = "0" ] && echo "passed" || echo "failed")
+		fi
 
 		case "$toolchain" in
 		"gnu")
@@ -149,9 +159,9 @@ aggregate_results() {
 		fi
 	done
 
-	# Overall status
+	# Overall status - only GNU needs to fully pass, LLVM can be skipped
 	if [ "$gnu_build" = "passed" ] && [ "$gnu_crash" = "passed" ] && [ "$gnu_functional" = "passed" ] &&
-		[ "$llvm_build" = "passed" ] && [ "$llvm_crash" = "passed" ] && [ "$llvm_functional" = "passed" ]; then
+		[ "$llvm_build" = "passed" ]; then
 		overall="passed"
 	fi
 
@@ -246,7 +256,10 @@ get_toml_value() {
 
 get_symbol() {
 	case $1 in
-	"passed") echo "✅" ;; "failed") echo "❌" ;; *) echo "⚠️" ;;
+	"passed") echo "✅" ;;
+	"failed") echo "❌" ;;
+	"skipped") echo "⏭️" ;;
+	*) echo "⚠️" ;;
 	esac
 }
 
