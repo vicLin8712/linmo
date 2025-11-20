@@ -11,7 +11,7 @@ show_help() {
 Usage: $SCRIPT_NAME <command> [options]
 
 Commands:
-  collect-data <toolchain> <test_output> [functional_output]
+  collect-data <toolchain> <commit_sha> <commit_short> <github_repo> <test_output> [functional_output]
     Extract and store test data from CI outputs
 
   aggregate <results_dir> <output_file>
@@ -27,7 +27,7 @@ Commands:
     Print clean TOML report
 
 Examples:
-  $SCRIPT_NAME collect-data gnu "\$test_output" "\$functional_output"
+  $SCRIPT_NAME collect-data gnu "\$COMMIT_SHA" "\$COMMIT_SHORT" "\$GITHUB_REPO" "\$test_output" "\$functional_output"
   $SCRIPT_NAME aggregate all-test-results test-summary.toml
   $SCRIPT_NAME format-comment test-summary.toml
   $SCRIPT_NAME post-comment test-summary.toml 123
@@ -38,8 +38,11 @@ EOF
 # Data collection function
 collect_data() {
     local toolchain=${1:-unknown}
-    local test_output=${2:-}
-    local functional_output=${3:-}
+    local commit_sha=${2:-}
+    local commit_short=${3:-}
+    local github_repo=${4:-}
+    local test_output=${5:-}
+    local functional_output=${6:-}
 
     if [ -z "$test_output" ]; then
         echo "Error: test_output required"
@@ -48,6 +51,9 @@ collect_data() {
 
     mkdir -p test-results
     echo "$toolchain" > test-results/toolchain
+    echo "$commit_sha" > test-results/commit_sha
+    echo "$commit_short" > test-results/commit_short
+    echo "$github_repo" > test-results/github_repo
 
     # Extract app data
     echo "$test_output" | grep "APP_STATUS:" | sed 's/APP_STATUS://' > test-results/apps_data || touch test-results/apps_data
@@ -103,6 +109,7 @@ aggregate_results() {
     llvm_build="failed" llvm_crash="failed" llvm_functional="failed"
     overall="failed"
     apps_data="" functional_data="" functional_criteria_data=""
+    commit_sha="" commit_short="" github_repo=""
 
     # Process artifacts
     for artifact_dir in "$results_dir"/test-results-*; do
@@ -111,6 +118,13 @@ aggregate_results() {
         toolchain=$(cat "$artifact_dir/toolchain" 2> /dev/null || echo "unknown")
         crash_exit=$(cat "$artifact_dir/crash_exit_code" 2> /dev/null || echo "1")
         functional_exit=$(cat "$artifact_dir/functional_exit_code" 2> /dev/null || echo "1")
+
+        # Read commit info from first artifact (same across all toolchains)
+        if [ -z "$commit_sha" ]; then
+            commit_sha=$(cat "$artifact_dir/commit_sha" 2> /dev/null || echo "")
+            commit_short=$(cat "$artifact_dir/commit_short" 2> /dev/null || echo "")
+            github_repo=$(cat "$artifact_dir/github_repo" 2> /dev/null || echo "")
+        fi
 
         build_status="passed"
         # Handle skipped tests
@@ -174,6 +188,9 @@ aggregate_results() {
 [summary]
 status = "$overall"
 timestamp = "$(date -Iseconds)"
+commit_sha = "$commit_sha"
+commit_short = "$commit_short"
+github_repo = "$github_repo"
 
 [info]
 architecture = "riscv32"
@@ -275,6 +292,9 @@ format_comment() {
     # Extract basic info
     overall_status=$(get_value "summary" "status" "$toml_file")
     timestamp=$(get_value "summary" "timestamp" "$toml_file")
+    commit_sha=$(get_value "summary" "commit_sha" "$toml_file")
+    commit_short=$(get_value "summary" "commit_short" "$toml_file")
+    github_repo=$(get_value "summary" "github_repo" "$toml_file")
     gnu_build=$(get_value "gnu" "build" "$toml_file")
     gnu_crash=$(get_value "gnu" "crash" "$toml_file")
     gnu_functional=$(get_value "gnu" "functional" "$toml_file")
@@ -283,11 +303,21 @@ format_comment() {
     llvm_functional=$(get_value "llvm" "functional" "$toml_file")
 
     # Generate comment
+    # Build commit link if we have repo and SHA
+    commit_info=""
+    if [ -n "$github_repo" ] && [ -n "$commit_sha" ] && [ -n "$commit_short" ]; then
+        commit_url="https://github.com/$github_repo/commit/$commit_sha"
+        commit_info="**Commit:** [\`$commit_short\`]($commit_url)"
+    else
+        commit_info="**Commit:** (not available)"
+    fi
+
     cat << EOF
 ## Linmo CI Test Results
 
 **Overall Status:** $(get_symbol "$overall_status") $overall_status
 **Timestamp:** $timestamp
+$commit_info
 
 ### Toolchain Results
 

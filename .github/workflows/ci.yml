@@ -136,10 +136,17 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          COMMIT_SHA="${{ github.sha }}"
+          COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "${{ github.sha }}" | cut -c1-7)
+          GITHUB_REPO="${{ github.repository }}"
+
           if [ "${{ matrix.toolchain }}" = "llvm" ]; then
             # LLVM: Build-only validation, skip tests
             mkdir -p test-results
             echo "${{ matrix.toolchain }}" > test-results/toolchain
+            echo "$COMMIT_SHA" > test-results/commit_sha
+            echo "$COMMIT_SHORT" > test-results/commit_short
+            echo "$GITHUB_REPO" > test-results/github_repo
             echo "skipped" > test-results/crash_exit_code
             echo "skipped" > test-results/functional_exit_code
 
@@ -163,7 +170,7 @@ jobs:
             echo "LLVM toolchain: Build validation only (tests skipped)"
           else
             # GNU: Full test suite
-            .ci/ci-tools.sh collect-data "${{ matrix.toolchain }}" "${{ steps.test.outputs.TEST_OUTPUT }}" "${{ steps.functional_test.outputs.FUNCTIONAL_TEST_OUTPUT }}"
+            .ci/ci-tools.sh collect-data "${{ matrix.toolchain }}" "$COMMIT_SHA" "$COMMIT_SHORT" "$GITHUB_REPO" "${{ steps.test.outputs.TEST_OUTPUT }}" "${{ steps.functional_test.outputs.FUNCTIONAL_TEST_OUTPUT }}"
           fi
 
       - name: Upload Test Results
