@@ -6,6 +6,7 @@
  */
 
 #include <hal.h>
+#include <lib/libc.h>
 #include <lib/queue.h>
 #include <sys/task.h>
 
@@ -40,10 +41,6 @@ static volatile uint32_t timer_work_generation = 0; /* counter for coalescing */
 #if CONFIG_STACK_PROTECTION
 /* Stack canary checking frequency - check every N context switches */
 #define STACK_CHECK_INTERVAL 32
-
-/* Magic number written to both ends of a task's stack for corruption detection.
- */
-#define STACK_CANARY 0x33333333U
 
 /* Stack check counter for periodic validation (reduces overhead). */
 static uint32_t stack_check_counter = 0;
@@ -153,12 +150,12 @@ static void task_stack_check(void)
     uint32_t *hi_canary_ptr = (uint32_t *) ((uintptr_t) self->stack +
                                             self->stack_sz - sizeof(uint32_t));
 
-    if (unlikely(*lo_canary_ptr != STACK_CANARY ||
-                 *hi_canary_ptr != STACK_CANARY)) {
+    if (unlikely(*lo_canary_ptr != self->canary ||
+                 *hi_canary_ptr != self->canary)) {
         printf("\n*** STACK CORRUPTION: task %u base=%p size=%u\n", self->id,
                self->stack, (unsigned int) self->stack_sz);
         printf("    Canary values: low=0x%08x, high=0x%08x (expected 0x%08x)\n",
-               *lo_canary_ptr, *hi_canary_ptr, STACK_CANARY);
+               *lo_canary_ptr, *hi_canary_ptr, self->canary);
         panic(ERR_STACK_CHECK);
     }
 }
@@ -544,10 +541,16 @@ static bool init_task_stack(tcb_t *tcb, size_t stack_size)
     }
 
 #if CONFIG_STACK_PROTECTION
-    /* Only initialize essential parts to reduce overhead */
-    *(uint32_t *) stack = STACK_CANARY;
+    /* Generate random canary for this task */
+    tcb->canary = (uint32_t) random();
+    /* Ensure canary is never zero */
+    if (tcb->canary == 0)
+        tcb->canary = 0xDEADBEEFU;
+
+    /* Write canary to both ends of stack */
+    *(uint32_t *) stack = tcb->canary;
     *(uint32_t *) ((uintptr_t) stack + stack_size - sizeof(uint32_t)) =
-        STACK_CANARY;
+        tcb->canary;
 #endif
 
     tcb->stack = stack;

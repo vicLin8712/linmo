@@ -24,6 +24,13 @@ int32_t main(void)
     printf("Heap initialized, %u bytes available\n",
            (unsigned int) (size_t) &_heap_size);
 
+    /* Seed PRNG with hardware entropy for stack canary randomization.
+     * Combine cycle counter (mcycle) and us timer for unpredictability. This
+     * prevents fixed canary values across boots.
+     */
+    uint32_t entropy = read_csr(mcycle) ^ (uint32_t) _read_us();
+    srand(entropy);
+
     /* Initialize deferred logging system.
      * Must be done after heap init but before app_main() to ensure
      * application tasks can use thread-safe printf.

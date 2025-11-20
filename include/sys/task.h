@@ -82,6 +82,9 @@ typedef struct tcb {
 
     /* Real-time Scheduling Support */
     void *rt_prio; /* Opaque pointer for custom real-time scheduler hook */
+
+    /* Stack Protection */
+    uint32_t canary; /* Random stack canary for overflow detection */
 } tcb_t;
 
 /* Kernel Control Block (KCB)
