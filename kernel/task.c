@@ -442,20 +442,15 @@ void sched_tick_current_task(void)
     }
 }
 
-/* Task wakeup - simple state transition approach */
+/* Task wakeup and enqueue into ready queue */
 void sched_wakeup_task(tcb_t *task)
 {
     if (unlikely(!task))
         return;
 
-    /* Mark task as ready - scheduler will find it during round-robin traversal
-     */
-    if (task->state != TASK_READY) {
-        task->state = TASK_READY;
-        /* Ensure task has time slice */
-        if (task->time_slice == 0)
-            task->time_slice = get_priority_timeslice(task->prio_level);
-    }
+    /* Enqueue task into ready queue */
+    if (task->state != TASK_READY && task->state != TASK_RUNNING)
+        sched_enqueue_task(task);
 }
 
 /* Efficient Round-Robin Task Selection with O(n) Complexity
@@ -880,6 +875,10 @@ int32_t mo_task_cancel(uint16_t id)
         }
     }
 
+    /* Remove from ready queue */
+    if (tcb->state == TASK_READY)
+        sched_dequeue_task(tcb);
+
     CRITICAL_LEAVE();
 
     /* Free memory outside critical section */
@@ -909,7 +908,9 @@ void mo_task_delay(uint16_t ticks)
 
     tcb_t *self = tcb_from_global_node(kcb->task_current);
 
-    /* Set delay and blocked state - scheduler will skip blocked tasks */
+    /* Set delay and blocked state, dequeue from ready queue */
+    sched_dequeue_task(self);
+
     self->delay = ticks;
     self->state = TASK_BLOCKED;
     NOSCHED_LEAVE();
@@ -936,8 +937,13 @@ int32_t mo_task_suspend(uint16_t id)
         return ERR_TASK_CANT_SUSPEND;
     }
 
+    /* Remove task node from ready queue if task is in ready queue
+     * (TASK_RUNNING/TASK_READY).*/
+    if (task->state == TASK_READY || task->state == TASK_RUNNING)
+        sched_dequeue_task(task);
+
     task->state = TASK_SUSPENDED;
-    bool is_current = (kcb->task_current == node);
+    bool is_current = (kcb->task_current == &task->rq_node);
 
     CRITICAL_LEAVE();
 
@@ -964,9 +970,8 @@ int32_t mo_task_resume(uint16_t id)
         CRITICAL_LEAVE();
         return ERR_TASK_CANT_RESUME;
     }
-
-    /* mark as ready - scheduler will find it */
-    task->state = TASK_READY;
+    /* Enqueue resumed task into ready queue */
+    sched_enqueue_task(task);
 
     CRITICAL_LEAVE();
     return ERR_OK;
@@ -1086,6 +1091,9 @@ void _sched_block(queue_t *wait_q)
     process_deferred_timer_work();
 
     tcb_t *self = tcb_from_global_node(kcb->task_current);
+
+    /* Remove node from ready queue */
+    sched_dequeue_task(self);
 
     if (queue_enqueue(wait_q, self) != 0)
         panic(ERR_SEM_OPERATION);
