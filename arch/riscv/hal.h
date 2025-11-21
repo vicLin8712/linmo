@@ -76,6 +76,12 @@ int32_t hal_context_save(jmp_buf env);
 void hal_context_restore(jmp_buf env, int32_t val);
 void hal_dispatch_init(jmp_buf env);
 
+/* Stack switching for preemptive context switch.
+ * Saves current SP to *old_sp and loads new SP from new_sp.
+ * Used by dispatcher when switching tasks in preemptive mode.
+ */
+void hal_switch_stack(void **old_sp, void *new_sp);
+
 /* Provides a blocking, busy-wait delay.
  * This function monopolizes the CPU and should only be used for very short
  * delays or in pre-scheduling initialization code.
@@ -92,7 +98,14 @@ uint64_t _read_us(void);
 void hal_hardware_init(void);
 void hal_timer_enable(void);
 void hal_timer_disable(void);
-void hal_interrupt_tick(void);
+void hal_timer_irq_enable(
+    void); /* Enable timer interrupt bit only (for NOSCHED) */
+void hal_timer_irq_disable(
+    void); /* Disable timer interrupt bit only (for NOSCHED) */
+void hal_interrupt_tick(void); /* Enable interrupts on first task run */
+void *hal_build_initial_frame(
+    void *stack_top,
+    void (*task_entry)(void)); /* Build ISR frame for preemptive mode */
 
 /* Initializes the context structure for a new task.
  * @ctx : Pointer to jmp_buf to initialize (must be non-NULL).
@@ -109,4 +122,4 @@ void hal_panic(void);
 void hal_cpu_idle(void);
 
 /* Default stack size for new tasks if not otherwise specified */
-#define DEFAULT_STACK_SIZE 4096
+#define DEFAULT_STACK_SIZE 8192

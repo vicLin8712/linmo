@@ -58,3 +58,21 @@ uint32_t mo_logger_queue_depth(void);
  * Returns total dropped message count since logger init
  */
 uint32_t mo_logger_dropped_count(void);
+
+/* Check if logger is in direct output mode.
+ * Lock-free read for performance - safe to call frequently.
+ * Returns true if printf/puts should bypass the queue.
+ */
+bool mo_logger_direct_mode(void);
+
+/* Flush all pending messages and enter direct output mode.
+ * Drains the queue directly from caller's context.
+ * After flush, printf/puts bypass the queue for ordered output.
+ * Call mo_logger_async_resume() to re-enable async logging.
+ */
+void mo_logger_flush(void);
+
+/* Re-enable async logging after a flush.
+ * Call this after completing ordered output that required direct mode.
+ */
+void mo_logger_async_resume(void);

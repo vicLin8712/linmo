@@ -42,6 +42,19 @@
  */
 #define ISR_STACK_FRAME_SIZE 128
 
+/* Global variable to hold the new stack pointer for pending context switch.
+ * When a context switch is needed, hal_switch_stack() saves the current SP
+ * and stores the new SP here. The ISR epilogue then uses this value.
+ * NULL means no context switch is pending, use current SP.
+ */
+static void *pending_switch_sp = NULL;
+
+/* Global variable to hold the ISR frame SP for the current trap.
+ * Set at the start of do_trap() so hal_switch_stack() can save the correct
+ * SP to the previous task (the ISR frame SP, not the current function's SP).
+ */
+static uint32_t current_isr_frame_sp = 0;
+
 /* NS16550A UART0 - Memory-mapped registers for the QEMU 'virt' machine's serial
  * port.
  */
@@ -248,31 +261,48 @@ void hal_cpu_idle(void)
 
 /* Interrupt and Trap Handling */
 
+/* Direct UART output for trap context (avoids printf deadlock) */
+extern int _putchar(int c);
+static void trap_puts(const char *s)
+{
+    while (*s)
+        _putchar(*s++);
+}
+
+/* Exception message table per RISC-V Privileged Spec */
+static const char *exc_msg[] = {
+    [0] = "Instruction address misaligned",
+    [1] = "Instruction access fault",
+    [2] = "Illegal instruction",
+    [3] = "Breakpoint",
+    [4] = "Load address misaligned",
+    [5] = "Load access fault",
+    [6] = "Store/AMO address misaligned",
+    [7] = "Store/AMO access fault",
+    [8] = "Environment call from U-mode",
+    [9] = "Environment call from S-mode",
+    [10] = "Reserved",
+    [11] = "Environment call from M-mode",
+    [12] = "Instruction page fault",
+    [13] = "Load page fault",
+    [14] = "Reserved",
+    [15] = "Store/AMO page fault",
+};
+
 /* C-level trap handler, called by the '_isr' assembly routine.
  * @cause : The value of the 'mcause' CSR, indicating the reason for the trap.
  * @epc   : The value of the 'mepc' CSR, the PC at the time of the trap.
+ * @isr_sp: The stack pointer pointing to the ISR frame.
+ *
+ * Returns The SP to use for restoring context (same or new task's frame).
  */
-void do_trap(uint32_t cause, uint32_t epc)
+uint32_t do_trap(uint32_t cause, uint32_t epc, uint32_t isr_sp)
 {
-    static const char *exc_msg[] = {
-        /* For printing helpful debug messages */
-        [0] = "Instruction address misaligned",
-        [1] = "Instruction access fault",
-        [2] = "Illegal instruction",
-        [3] = "Breakpoint",
-        [4] = "Load address misaligned",
-        [5] = "Load access fault",
-        [6] = "Store/AMO address misaligned",
-        [7] = "Store/AMO access fault",
-        [8] = "Environment call from U-mode",
-        [9] = "Environment call from S-mode",
-        [10] = "Reserved",
-        [11] = "Environment call from M-mode",
-        [12] = "Instruction page fault",
-        [13] = "Load page fault",
-        [14] = "Reserved",
-        [15] = "Store/AMO page fault",
-    };
+    /* Reset pending switch at start of every trap */
+    pending_switch_sp = NULL;
+
+    /* Store ISR frame SP so hal_switch_stack() can save it to prev task */
+    current_isr_frame_sp = isr_sp;
 
     if (MCAUSE_IS_INTERRUPT(cause)) { /* Asynchronous Interrupt */
         uint32_t int_code = MCAUSE_GET_CODE(cause);
@@ -282,28 +312,64 @@ void do_trap(uint32_t cause, uint32_t epc)
              * consistent tick frequency even with interrupt latency.
              */
             mtimecmp_w(mtimecmp_r() + (F_CPU / F_TIMER));
-            dispatcher(); /* Invoke the OS scheduler */
+            /* Invoke scheduler - parameter 1 = from timer, increment ticks */
+            dispatcher(1);
         } else {
             /* All other interrupt sources are unexpected and fatal */
-            printf("[UNHANDLED INTERRUPT] code=%u, cause=%08x, epc=%08x\n",
-                   int_code, cause, epc);
             hal_panic();
         }
     } else { /* Synchronous Exception */
         uint32_t code = MCAUSE_GET_CODE(cause);
-        const char *reason = "Unknown exception";
+
+        /* Handle ecall from M-mode - used for yielding in preemptive mode */
+        if (code == MCAUSE_ECALL_MMODE) {
+            /* Advance mepc past the ecall instruction (4 bytes) */
+            uint32_t new_epc = epc + 4;
+            write_csr(mepc, new_epc);
+
+            /* Also update mepc in the ISR frame on the stack!
+             * The ISR epilogue will restore mepc from the frame (offset 31*4 =
+             * 124 bytes). If we don't update the frame, mret will jump back to
+             * the ecall instruction!
+             */
+            uint32_t *isr_frame = (uint32_t *) isr_sp;
+            isr_frame[31] = new_epc;
+
+            /* Invoke dispatcher for context switch - parameter 0 = from ecall,
+             * don't increment ticks.
+             */
+            dispatcher(0);
+
+            /* Return the SP to use - new task's frame or current frame */
+            return pending_switch_sp ? (uint32_t) pending_switch_sp : isr_sp;
+        }
+
+        /* Print exception info via direct UART (safe in trap context) */
+        trap_puts("[EXCEPTION] ");
         if (code < ARRAY_SIZE(exc_msg) && exc_msg[code])
-            reason = exc_msg[code];
-        printf("[EXCEPTION] code=%u (%s), epc=%08x, cause=%08x\n", code, reason,
-               epc, cause);
+            trap_puts(exc_msg[code]);
+        else
+            trap_puts("Unknown");
+        trap_puts(" epc=0x");
+        for (int i = 28; i >= 0; i -= 4) {
+            uint32_t nibble = (epc >> i) & 0xF;
+            _putchar(nibble < 10 ? '0' + nibble : 'A' + nibble - 10);
+        }
+        trap_puts("\r\n");
+
         hal_panic();
     }
+
+    /* Return the SP to use for context restore - new task's frame or current */
+    return pending_switch_sp ? (uint32_t) pending_switch_sp : isr_sp;
 }
 
 /* Enables the machine-level timer interrupt source */
 void hal_timer_enable(void)
 {
-    mtimecmp_w(mtime_r() + (F_CPU / F_TIMER));
+    uint64_t now = mtime_r();
+    uint64_t target = now + (F_CPU / F_TIMER);
+    mtimecmp_w(target);
     write_csr(mie, read_csr(mie) | MIE_MTIE);
 }
 
@@ -313,20 +379,66 @@ void hal_timer_disable(void)
     write_csr(mie, read_csr(mie) & ~MIE_MTIE);
 }
 
-/* Hook called by the scheduler after a context switch.
- * Its primary purpose is to enable global interrupts ('mstatus.MIE') only
- * AFTER the first task has been launched. This ensures interrupts are not
- * globally enabled until the OS is fully running in a valid task context.
+/* Enable timer interrupt bit only - does NOT reset mtimecmp.
+ * Use this for NOSCHED_LEAVE to avoid pushing the interrupt deadline forward.
  */
-void hal_interrupt_tick(void)
+void hal_timer_irq_enable(void)
 {
-    tcb_t *task = kcb->task_current->data;
-    if (unlikely(!task))
-        hal_panic(); /* Fatal error - invalid task state */
+    write_csr(mie, read_csr(mie) | MIE_MTIE);
+}
 
-    /* The task's entry point is still in RA, so this is its very first run */
-    if ((uint32_t) task->entry == task->context[CONTEXT_RA])
-        _ei(); /* Enable global interrupts now that execution is in a task */
+/* Disable timer interrupt bit only - does NOT touch mtimecmp.
+ * Use this for NOSCHED_ENTER to temporarily disable preemption.
+ */
+void hal_timer_irq_disable(void)
+{
+    write_csr(mie, read_csr(mie) & ~MIE_MTIE);
+}
+
+/* Linker script symbols - needed for task initialization */
+extern uint32_t _gp, _end;
+
+/* Build initial ISR frame on task stack for preemptive mode.
+ * Returns the stack pointer that points to the frame.
+ * When ISR restores from this frame, it will jump to task_entry.
+ *
+ * CRITICAL: ISR deallocates the frame before mret (sp += 128).
+ * We place the frame such that after deallocation, SP is at a safe location.
+ *
+ * ISR Stack Frame Layout (must match boot.c _isr):
+ *   0: ra,   4: gp,   8: tp,  12: t0, ... 116: t6
+ * 120: mcause, 124: mepc
+ */
+void *hal_build_initial_frame(void *stack_top, void (*task_entry)(void))
+{
+#define INITIAL_STACK_RESERVE \
+    256 /* Reserve space below stack_top for task startup */
+
+    /* Place frame deeper in stack so after ISR deallocates (sp += 128),
+     * SP will be at (stack_top - INITIAL_STACK_RESERVE), not at stack_top.
+     */
+    uint32_t *frame =
+        (uint32_t *) ((uint8_t *) stack_top - INITIAL_STACK_RESERVE -
+                      ISR_STACK_FRAME_SIZE);
+
+    /* Zero out entire frame */
+    for (int i = 0; i < 32; i++) {
+        frame[i] = 0;
+    }
+
+    /* Compute tp value same as boot.c: aligned to 64 bytes from _end */
+    uint32_t tp_val = ((uint32_t) &_end + 63) & ~63U;
+
+    /* Initialize critical registers for proper task startup:
+     * - frame[1] = gp: Global pointer, required for accessing global variables
+     * - frame[2] = tp: Thread pointer, required for thread-local storage
+     * - frame[31] = mepc: Task entry point, where mret will jump to
+     */
+    frame[1] = (uint32_t) &_gp;        /* gp - global pointer */
+    frame[2] = tp_val;                 /* tp - thread pointer */
+    frame[31] = (uint32_t) task_entry; /* mepc - entry point */
+
+    return (void *) frame;
 }
 
 /* Context Switching */
@@ -468,6 +580,18 @@ __attribute__((noreturn)) void hal_context_restore(jmp_buf env, int32_t val)
     if (unlikely(!env))
         hal_panic(); /* Cannot proceed with invalid context */
 
+    /* Validate RA is in text section (simple sanity check) */
+    uint32_t ra = env[15]; /* CONTEXT_RA = 15 */
+    if (ra < 0x80000000 || ra > 0x80010000) {
+        trap_puts("[CTX_ERR] Bad RA=0x");
+        for (int i = 28; i >= 0; i -= 4) {
+            uint32_t nibble = (ra >> i) & 0xF;
+            _putchar(nibble < 10 ? '0' + nibble : 'A' + nibble - 10);
+        }
+        trap_puts("\r\n");
+        hal_panic();
+    }
+
     if (val == 0)
         val = 1; /* Must return a non-zero value after restore */
 
@@ -503,12 +627,60 @@ __attribute__((noreturn)) void hal_context_restore(jmp_buf env, int32_t val)
     __builtin_unreachable(); /* Tell compiler this point is never reached */
 }
 
+/* Stack pointer switching for preemptive context switch.
+ * Saves current SP to *old_sp and loads new SP from new_sp.
+ * Called by dispatcher when switching tasks in preemptive mode.
+ * After this returns, ISR will restore registers from the new stack.
+ *
+ * @old_sp: Pointer to location where current SP should be saved
+ * @new_sp: New stack pointer to switch to
+ */
+void hal_switch_stack(void **old_sp, void *new_sp)
+{
+    /* Save the ISR frame SP (NOT current SP which is deep in call stack!)
+     * to prev task. DO NOT change SP here - that would corrupt the C call
+     * stack! Instead, store new_sp in pending_switch_sp for ISR epilogue.
+     */
+    *old_sp = (void *) current_isr_frame_sp;
+
+    /* Set pending switch - ISR epilogue will use this SP for restore */
+    pending_switch_sp = new_sp;
+}
+
+/* Enable interrupts on first run of a task.
+ * Checks if task's return address still points to entry (meaning it hasn't
+ * run yet), and if so, enables global interrupts.
+ */
+void hal_interrupt_tick(void)
+{
+    tcb_t *task = kcb->task_current->data;
+    if (unlikely(!task))
+        hal_panic();
+
+    /* The task's entry point is still in RA, so this is its very first run */
+    if ((uint32_t) task->entry == task->context[CONTEXT_RA])
+        _ei();
+}
+
 /* Low-level context restore helper. Expects a pointer to a 'jmp_buf' in 'a0'.
- * Restores the GPRs and jumps to the restored return address.
+ * Restores the GPRs, mstatus, and jumps to the restored return address.
+ *
+ * This function must restore mstatus from the context to be
+ * consistent with hal_context_restore(). The first task context is initialized
+ * with MSTATUS_MIE | MSTATUS_MPP_MACH by hal_context_init(), which enables
+ * interrupts. Failing to restore this value would create an inconsistency
+ * where the first task inherits the kernel's mstatus instead of its own.
  */
 static void __attribute__((naked, used)) __dispatch_init(void)
 {
     asm volatile(
+        /* Restore mstatus FIRST to ensure correct processor state.
+         * This is critical for interrupt enable state (MSTATUS_MIE).
+         * Context was initialized with MIE=1 by hal_context_init().
+         */
+        "lw  t0, 16*4(a0)\n"
+        "csrw mstatus, t0\n"
+        /* Now restore all general-purpose registers */
         "lw  s0,   0*4(a0)\n"
         "lw  s1,   1*4(a0)\n"
         "lw  s2,   2*4(a0)\n"
@@ -536,6 +708,7 @@ __attribute__((noreturn)) void hal_dispatch_init(jmp_buf env)
 
     if (kcb->preemptive)
         hal_timer_enable();
+
     _ei(); /* Enable global interrupts just before launching the first task */
 
     asm volatile(
@@ -573,6 +746,15 @@ void hal_context_init(jmp_buf *ctx, size_t sp, size_t ss, size_t ra)
 
     /* Zero the context for predictability */
     memset(ctx, 0, sizeof(*ctx));
+
+    /* Compute tp value same as boot.c: aligned to 64 bytes from _end */
+    uint32_t tp_val = ((uint32_t) &_end + 63) & ~63U;
+
+    /* Set global pointer and thread pointer for proper task execution.
+     * These are critical for accessing global variables and TLS.
+     */
+    (*ctx)[CONTEXT_GP] = (uint32_t) &_gp;
+    (*ctx)[CONTEXT_TP] = tp_val;
 
     /* Set the essential registers for a new task:
      * - SP is set to the prepared top of the task's stack.

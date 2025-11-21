@@ -28,6 +28,12 @@ typedef struct {
     mutex_t lock;     /* Protects queue manipulation, not UART output */
     int32_t task_id;
     bool initialized;
+
+    /* When true, printf bypasses queue.
+     * volatile: prevent compiler caching for lock-free read. Written under
+     * mutex, read without - safe on single-core.
+     */
+    volatile bool direct_mode;
 } logger_state_t;
 
 static logger_state_t logger;
@@ -75,8 +81,8 @@ int32_t mo_logger_init(void)
     if (mo_mutex_init(&logger.lock) != ERR_OK)
         return ERR_FAIL;
 
-    /* 512B stack: simple operations only (no printf/recursion/ISR use) */
-    logger.task_id = mo_task_spawn(logger_task, 512);
+    /* 1024B stack: space for log_entry_t (130B) + ISR frame (128B) + calls */
+    logger.task_id = mo_task_spawn(logger_task, 1024);
     if (logger.task_id < 0) {
         mo_mutex_destroy(&logger.lock);
         return ERR_FAIL;
@@ -148,4 +154,63 @@ uint32_t mo_logger_dropped_count(void)
     mo_mutex_unlock(&logger.lock);
 
     return dropped;
+}
+
+/* Check if logger is in direct output mode.
+ * Lock-free read: safe because direct_mode is only set atomically by flush
+ * and cleared by async_resume, both under mutex protection. Reading a stale
+ * value is benign (worst case: one extra direct output or one queued message).
+ */
+bool mo_logger_direct_mode(void)
+{
+    return logger.initialized && logger.direct_mode;
+}
+
+/* Flush all pending messages and enter direct output mode.
+ * Drains the queue directly from caller's context, bypassing logger task.
+ * After flush, printf/puts bypass the queue for ordered output.
+ * Call mo_logger_async_resume() to re-enable async logging.
+ */
+void mo_logger_flush(void)
+{
+    if (!logger.initialized)
+        return;
+
+    log_entry_t entry;
+
+    while (1) {
+        bool have_message = false;
+
+        mo_mutex_lock(&logger.lock);
+        if (logger.count > 0) {
+            memcpy(&entry, &logger.queue[logger.tail], sizeof(log_entry_t));
+            logger.tail = (logger.tail + 1) % LOG_QSIZE;
+            logger.count--;
+            have_message = true;
+        } else {
+            /* Queue drained: enter direct mode while still holding lock */
+            logger.direct_mode = true;
+        }
+        mo_mutex_unlock(&logger.lock);
+
+        if (!have_message)
+            break;
+
+        /* Output outside lock */
+        for (uint16_t i = 0; i < entry.length; i++)
+            _putchar(entry.data[i]);
+    }
+}
+
+/* Re-enable async logging after a flush.
+ * Call this after completing ordered output that required direct mode.
+ */
+void mo_logger_async_resume(void)
+{
+    if (!logger.initialized)
+        return;
+
+    mo_mutex_lock(&logger.lock);
+    logger.direct_mode = false;
+    mo_mutex_unlock(&logger.lock);
 }
