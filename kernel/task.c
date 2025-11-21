@@ -670,7 +670,6 @@ int32_t mo_task_cancel(uint16_t id)
     /* Free memory outside critical section */
     free(tcb->stack);
     free(tcb);
-    free(node);
     return ERR_OK;
 }
 
