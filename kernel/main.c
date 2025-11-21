@@ -67,6 +67,11 @@ int32_t main(void)
     if (!first_task)
         panic(ERR_NO_TASKS);
 
+    /* Mark scheduler as started - enables timer IRQ in NOSCHED_LEAVE.
+     * Must be set before hal_dispatch_init() which enables preemption.
+     */
+    scheduler_started = true;
+
     hal_dispatch_init(first_task->context);
 
     /* This line should be unreachable. */

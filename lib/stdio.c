@@ -294,7 +294,11 @@ int vsnprintf(char *str, size_t size, const char *fmt, va_list args)
 /* Formatted output to stdout.
  * Uses a fixed stack buffer - very long output will be truncated.
  * Thread-safe: Uses deferred logging via logger task.
- * Falls back to direct output during early boot or if queue is full.
+ * Falls back to direct output during early boot, queue full, or after flush.
+ *
+ * Flush-aware behavior: After mo_logger_flush(), printf() outputs directly
+ * to UART (direct_mode flag set), ensuring ordered output for multi-line
+ * reports. Call mo_logger_async_resume() to re-enable async logging.
  */
 int32_t printf(const char *fmt, ...)
 {
@@ -305,13 +309,22 @@ int32_t printf(const char *fmt, ...)
     int32_t len = vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    /* Try deferred logging only if message fits (avoids silent truncation).
-     * Long messages fall back to direct output for completeness.
+    /* Handle vsnprintf error (negative return indicates encoding error) */
+    if (len < 0)
+        return len;
+
+    /* Try deferred logging only if:
+     * 1. Message fits in log entry (avoids silent truncation)
+     * 2. Not in direct mode (set by mo_logger_flush)
+     * 3. Enqueue succeeds (queue not full)
      */
-    if (len <= LOG_ENTRY_SZ - 1 && mo_logger_enqueue(buf, len) == 0)
+    if (len <= LOG_ENTRY_SZ - 1 && !mo_logger_direct_mode() &&
+        mo_logger_enqueue(buf, len) == 0)
         return len; /* Successfully enqueued */
 
-    /* Fallback to direct output (early boot, queue full, or too long) */
+    /* Direct output: early boot, direct mode (post-flush), queue full, or too
+     * long.
+     */
     char *p = buf;
     while (*p)
         _putchar(*p++);
@@ -336,7 +349,8 @@ int32_t snprintf(char *str, size_t size, const char *fmt, ...)
 
 /* Writes a string to stdout, followed by a newline.
  * Thread-safe: Uses deferred logging via logger task.
- * Falls back to direct output during early boot or if queue is full.
+ * Falls back to direct output during early boot, queue full, or after flush.
+ * Same flush-aware behavior as printf() for ordered multi-line output.
  */
 int32_t puts(const char *str)
 {
@@ -349,11 +363,14 @@ int32_t puts(const char *str)
     buf[len++] = '\n';
     buf[len] = '\0';
 
-    /* Try deferred logging only if message fits (avoids silent truncation) */
-    if (len <= LOG_ENTRY_SZ - 1 && mo_logger_enqueue(buf, len) == 0)
+    /* Try deferred logging only if not in direct mode */
+    if (len <= LOG_ENTRY_SZ - 1 && !mo_logger_direct_mode() &&
+        mo_logger_enqueue(buf, len) == 0)
         return 0; /* Successfully enqueued */
 
-    /* Fallback to direct output (early boot, queue full, or too long) */
+    /* Direct output: early boot, direct mode (post-flush), queue full, or too
+     * long.
+     */
     char *p = buf;
     while (*p)
         _putchar(*p++);

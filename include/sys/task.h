@@ -67,6 +67,7 @@ enum task_states {
 typedef struct tcb {
     /* Context and Stack Management */
     jmp_buf context; /* Saved CPU context (GPRs, SP, PC) for task switching */
+    void *sp;        /* Saved stack pointer for preemptive context switch */
     void *stack;     /* Pointer to base of task's allocated stack memory */
     size_t stack_sz; /* Total size of the stack in bytes */
     void (*entry)(void); /* Task's entry point function */
@@ -145,21 +146,29 @@ extern kcb_t *kcb;
             _ei();           \
     } while (0)
 
+/* Flag indicating scheduler has started - prevents timer IRQ during early
+ * initializations.
+ */
+extern volatile bool scheduler_started;
+
 /* Disable/enable ONLY the scheduler timer interrupt.
  * Lighter-weight critical section that prevents task preemption but allows
  * other hardware interrupts (e.g., UART) to be serviced, minimizing latency.
  * Use when protecting data shared between tasks.
+ *
+ * NOSCHED_LEAVE only enables timer if scheduler has started, preventing
+ * premature timer interrupts during early initialization (e.g., logger init).
  */
-#define NOSCHED_ENTER()          \
-    do {                         \
-        if (kcb->preemptive)     \
-            hal_timer_disable(); \
+#define NOSCHED_ENTER()              \
+    do {                             \
+        if (kcb->preemptive)         \
+            hal_timer_irq_disable(); \
     } while (0)
 
-#define NOSCHED_LEAVE()         \
-    do {                        \
-        if (kcb->preemptive)    \
-            hal_timer_enable(); \
+#define NOSCHED_LEAVE()                           \
+    do {                                          \
+        if (kcb->preemptive && scheduler_started) \
+            hal_timer_irq_enable();               \
     } while (0)
 
 /* Core Kernel and Task Management API */
@@ -169,8 +178,8 @@ extern kcb_t *kcb;
 /* Prints a fatal error message and halts the system */
 void panic(int32_t ecode);
 
-/* Main scheduler dispatch function, called by the timer ISR */
-void dispatcher(void);
+/* Main scheduler dispatch function, called by timer ISR or ecall */
+void dispatcher(int from_timer);
 
 /* Architecture-specific context switch implementations */
 void _dispatch(void);

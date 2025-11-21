@@ -29,6 +29,12 @@ static kcb_t kernel_state = {
 };
 kcb_t *kcb = &kernel_state;
 
+/* Flag to track if scheduler has started - prevents timer IRQ during early
+ * init. NOSCHED_LEAVE checks this to avoid enabling timer before scheduler is
+ * ready.
+ */
+volatile bool scheduler_started = false;
+
 /* timer work management for reduced latency */
 static volatile uint32_t timer_work_pending = 0;    /* timer work types */
 static volatile uint32_t timer_work_generation = 0; /* counter for coalescing */
@@ -178,6 +184,22 @@ static list_node_t *delay_update_batch(list_node_t *node, void *arg)
     if (t->delay > 0) {
         if (--t->delay == 0) {
             t->state = TASK_READY;
+
+            /* If this is an RT task, set its deadline for the next job.
+             * For periodic tasks, deadline should be current_time + period.
+             * This ensures tasks are scheduled based on their actual deadlines,
+             * not inflated values from previous scheduler calls.
+             */
+            if (t->rt_prio) {
+                typedef struct {
+                    uint32_t period;
+                    uint32_t deadline;
+                } edf_prio_t;
+                edf_prio_t *edf = (edf_prio_t *) t->rt_prio;
+                extern kcb_t *kcb;
+                edf->deadline = kcb->ticks + edf->period;
+            }
+
             /* Add to appropriate priority ready queue */
             sched_enqueue_task(t);
             (*ready_count)++;
@@ -369,9 +391,13 @@ void sched_tick_current_task(void)
     if (current_task->time_slice > 0)
         current_task->time_slice--;
 
-    /* If time slice expired, force immediate rescheduling */
+    /* If time slice expired, mark task as ready for rescheduling.
+     * Don't call _dispatch() here - let the normal dispatcher() flow handle it.
+     * Calling _dispatch() from within dispatcher() causes double-dispatch bug.
+     */
     if (current_task->time_slice == 0) {
-        _dispatch();
+        if (current_task->state == TASK_RUNNING)
+            current_task->state = TASK_READY;
     }
 }
 
@@ -443,7 +469,29 @@ uint16_t sched_select_next_task(void)
 
     } while (node != start_node && ++iterations < SCHED_IMAX);
 
-    /* No ready tasks found - this should not happen in normal operation */
+    /* No ready tasks found in preemptive mode - all tasks are blocked.
+     * This is normal for periodic RT tasks waiting for their next period.
+     * We CANNOT return a BLOCKED task as that would cause it to run.
+     * Instead, find ANY task (even blocked) as a placeholder, then wait for
+     * interrupt.
+     */
+    if (kcb->preemptive) {
+        /* Select any task as placeholder (dispatcher won't actually switch to
+         * it if blocked) */
+        list_node_t *any_node = list_next(kcb->tasks->head);
+        while (any_node && any_node != kcb->tasks->tail) {
+            if (any_node->data) {
+                kcb->task_current = any_node;
+                tcb_t *any_task = any_node->data;
+                return any_task->id;
+            }
+            any_node = list_next(any_node);
+        }
+        /* No tasks at all - this is a real error */
+        panic(ERR_NO_TASKS);
+    }
+
+    /* In cooperative mode, having no ready tasks is an error */
     panic(ERR_NO_TASKS);
     return 0;
 }
@@ -454,10 +502,14 @@ static int32_t noop_rtsched(void)
     return -1;
 }
 
-/* The main entry point from the system tick interrupt. */
-void dispatcher(void)
+/* The main entry point from interrupts (timer or ecall).
+ * Parameter: from_timer = 1 if called from timer ISR (increment ticks),
+ *                       = 0 if called from ecall (don't increment ticks)
+ */
+void dispatcher(int from_timer)
 {
-    kcb->ticks++;
+    if (from_timer)
+        kcb->ticks++;
 
     /* Handle time slice for current task */
     sched_tick_current_task();
@@ -475,12 +527,15 @@ void dispatch(void)
     if (unlikely(!kcb || !kcb->task_current || !kcb->task_current->data))
         panic(ERR_NO_TASKS);
 
-    /* Save current context using dedicated HAL routine that handles both
-     * execution context and processor state for context switching.
-     * Returns immediately if this is the restore path.
+    /* Save current context - only needed for cooperative mode.
+     * In preemptive mode, ISR already saved context to stack,
+     * so we skip this step to avoid interference.
      */
-    if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
-        return;
+    if (!kcb->preemptive) {
+        /* Cooperative mode: use setjmp/longjmp mechanism */
+        if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
+            return;
+    }
 
 #if CONFIG_STACK_PROTECTION
     /* Do stack check less frequently to reduce overhead */
@@ -488,18 +543,99 @@ void dispatch(void)
         task_stack_check();
 #endif
 
-    /* Batch process task delays for better efficiency */
+    /* Batch process task delays for better efficiency.
+     * Only process delays if tick has advanced to avoid decrementing multiple
+     * times per tick when dispatch() is called multiple times.
+     */
     uint32_t ready_count = 0;
-    list_foreach(kcb->tasks, delay_update_batch, &ready_count);
+    static uint32_t last_delay_update_tick = 0;
+    if (kcb->ticks != last_delay_update_tick) {
+        list_foreach(kcb->tasks, delay_update_batch, &ready_count);
+        last_delay_update_tick = kcb->ticks;
+    }
 
     /* Hook for real-time scheduler - if it selects a task, use it */
-    if (kcb->rt_sched() < 0)
-        sched_select_next_task(); /* Use O(1) priority scheduler */
+    tcb_t *prev_task = kcb->task_current->data;
+    int32_t rt_task_id = kcb->rt_sched();
 
-    hal_interrupt_tick();
+    if (rt_task_id < 0) {
+        sched_select_next_task(); /* Use O(n) round-robin scheduler */
+    } else {
+        /* RT scheduler selected a task - update current task pointer */
+        list_node_t *rt_node = find_task_node_by_id((uint16_t) rt_task_id);
+        if (rt_node && rt_node->data) {
+            tcb_t *rt_task = rt_node->data;
+            /* Different task - perform context switch */
+            if (rt_node != kcb->task_current) {
+                if (kcb->task_current && kcb->task_current->data) {
+                    tcb_t *prev = kcb->task_current->data;
+                    if (prev->state == TASK_RUNNING)
+                        prev->state = TASK_READY;
+                }
+                /* Switch to RT task */
+                kcb->task_current = rt_node;
+                rt_task->state = TASK_RUNNING;
+                rt_task->time_slice =
+                    get_priority_timeslice(rt_task->prio_level);
+            }
+            /* If same task selected, fall through to do_context_switch
+             * which will check if task is blocked and handle appropriately */
+        } else {
+            /* RT task not found, fall back to round-robin */
+            sched_select_next_task();
+        }
+    }
 
-    /* Restore next task context */
-    hal_context_restore(((tcb_t *) kcb->task_current->data)->context, 1);
+    /* Check if we're still on the same task (no actual switch needed) */
+    tcb_t *next_task = kcb->task_current->data;
+
+    /* In preemptive mode, if selected task has pending delay, keep trying to
+     * find ready task. We check delay > 0 instead of state == BLOCKED because
+     * schedulers already modified state to RUNNING.
+     */
+    if (kcb->preemptive) {
+        int attempts = 0;
+        while (next_task->delay > 0 && attempts < 10) {
+            /* Try next task in round-robin */
+            kcb->task_current = list_cnext(kcb->tasks, kcb->task_current);
+            if (!kcb->task_current || !kcb->task_current->data)
+                kcb->task_current = list_next(kcb->tasks->head);
+            next_task = kcb->task_current->data;
+            attempts++;
+        }
+
+        /* If still has delay after all attempts, all tasks are blocked.
+         * Just select this task anyway - it will resume and immediately yield
+         * again, creating a busy-wait ecall loop until timer interrupt fires
+         * and decrements delays.
+         */
+    }
+
+    /* Update task state and time slice before context switch */
+    if (next_task->state != TASK_RUNNING)
+        next_task->state = TASK_RUNNING;
+    next_task->time_slice = get_priority_timeslice(next_task->prio_level);
+
+    /* Perform context switch based on scheduling mode */
+    if (kcb->preemptive) {
+        /* Same task - no context switch needed */
+        if (next_task == prev_task)
+            return; /* ISR will restore from current stack naturally */
+
+        /* Preemptive mode: Switch stack pointer.
+         * ISR already saved context to prev_task's stack.
+         * Switch SP to next_task's stack.
+         * When we return, ISR will restore from next_task's stack.
+         */
+        hal_switch_stack(&prev_task->sp, next_task->sp);
+    } else {
+        /* Cooperative mode: Always call hal_context_restore() because it uses
+         * setjmp/longjmp mechanism. Even if same task continues, we must
+         * longjmp back to complete the context save/restore cycle.
+         */
+        hal_interrupt_tick();
+        hal_context_restore(next_task->context, 1);
+    }
 }
 
 /* Cooperative context switch */
@@ -511,7 +647,24 @@ void yield(void)
     /* Process deferred timer work during yield */
     process_deferred_timer_work();
 
-    /* HAL context switching is used for preemptive scheduling. */
+    /* In preemptive mode, can't use setjmp/longjmp - incompatible with ISR
+     * stack frames. Trigger dispatcher via ecall, then wait until task becomes
+     * READY again.
+     */
+    if (kcb->preemptive) {
+        /* Trigger one dispatcher call - this will context switch to another
+         * task. When we return here (after being rescheduled), our delay will
+         * have expired.
+         */
+        __asm__ volatile("ecall");
+
+        /* After ecall returns, we've been context-switched back, meaning we're
+         * READY. No need to check state - if we're executing, we're ready.
+         */
+        return;
+    }
+
+    /* Cooperative mode: use setjmp/longjmp mechanism */
     if (hal_context_save(((tcb_t *) kcb->task_current->data)->context) != 0)
         return;
 
@@ -520,8 +673,7 @@ void yield(void)
 #endif
 
     /* In cooperative mode, delays are only processed on an explicit yield. */
-    if (!kcb->preemptive)
-        list_foreach(kcb->tasks, delay_update, NULL);
+    list_foreach(kcb->tasks, delay_update, NULL);
 
     sched_select_next_task(); /* Use O(1) priority scheduler */
     hal_context_restore(((tcb_t *) kcb->task_current->data)->context, 1);
@@ -626,6 +778,12 @@ int32_t mo_task_spawn(void *task_entry, uint16_t stack_size_req)
     /* Initialize execution context outside critical section. */
     hal_context_init(&tcb->context, (size_t) tcb->stack, new_stack_size,
                      (size_t) task_entry);
+
+    /* Initialize SP for preemptive mode.
+     * Build initial ISR frame on stack with mepc pointing to task entry.
+     */
+    void *stack_top = (void *) ((uint8_t *) tcb->stack + new_stack_size);
+    tcb->sp = hal_build_initial_frame(stack_top, task_entry);
 
     printf("task %u: entry=%p stack=%p size=%u prio_level=%u time_slice=%u\n",
            tcb->id, task_entry, tcb->stack, (unsigned int) new_stack_size,
@@ -807,6 +965,7 @@ int32_t mo_task_rt_priority(uint16_t id, void *priority)
     }
 
     task->rt_prio = priority;
+
     CRITICAL_LEAVE();
     return ERR_OK;
 }
@@ -838,9 +997,16 @@ void mo_task_wfi(void)
     if (!kcb->preemptive)
         return;
 
+    /* Enable interrupts before WFI - we're in ISR context with interrupts
+     * disabled. WFI needs interrupts enabled to wake up on timer interrupt.
+     */
+    _ei();
+
     volatile uint32_t current_ticks = kcb->ticks;
     while (current_ticks == kcb->ticks)
         hal_cpu_idle();
+
+    /* Note: Interrupts will be re-disabled when we return to ISR caller */
 }
 
 uint16_t mo_task_count(void)

@@ -156,11 +156,18 @@ __attribute__((naked, aligned(4))) void _isr(void)
         /* Save trap-related CSRs and prepare arguments for do_trap */
         "csrr   a0, mcause\n" /* Arg 1: cause */
         "csrr   a1, mepc\n"   /* Arg 2: epc */
+        "mv     a2, sp\n"     /* Arg 3: isr_sp (current stack frame) */
         "sw     a0,  30*4(sp)\n"
         "sw     a1,  31*4(sp)\n"
 
-        /* Call the high-level C trap handler */
+        /* Call the high-level C trap handler.
+         * Returns: a0 = SP to use for restoring context (may be different
+         * task's stack if context switch occurred).
+         */
         "call   do_trap\n"
+
+        /* Use returned SP for context restore (enables context switching) */
+        "mv     sp, a0\n"
 
         /* Restore context. mepc might have been modified by the handler */
         "lw     a1,  31*4(sp)\n"
