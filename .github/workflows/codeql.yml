@@ -1,0 +1,31 @@
+name: "CodeQL"
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential qemu-system-riscv32 wget
+
+      - name: Setup toolchain
+        run: .ci/setup-toolchain.sh gnu
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: cpp
+
+      - name: Build
+        run: make -j$(nproc)
+
+      - name: Run CodeQL analysis
+        uses: github/codeql-action/analyze@v4
