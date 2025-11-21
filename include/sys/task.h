@@ -312,3 +312,6 @@ void _sched_block(queue_t *wait_q);
  * Returns 'true' to enable preemptive scheduling, or 'false' for cooperative
  */
 int32_t app_main(void);
+
+/* Wake up and enqueue task into ready queue */
+void sched_wakeup_task(tcb_t *);

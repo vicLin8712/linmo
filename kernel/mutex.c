@@ -283,7 +283,7 @@ int32_t mo_mutex_unlock(mutex_t *m)
             /* Validate task state before waking */
             if (likely(next_owner->state == TASK_BLOCKED)) {
                 m->owner_tid = next_owner->id;
-                next_owner->state = TASK_READY;
+                sched_wakeup_task(next_owner);
                 /* Clear any pending timeout since we're granting ownership */
                 next_owner->delay = 0;
             } else {
