@@ -301,6 +301,9 @@ uint64_t mo_uptime(void);
  */
 void _sched_block(queue_t *wait_q);
 
+/* Support mutex data structure */
+void _sched_block_mutex(list_t *waiters);
+
 /* Application Entry Point */
 
 /* The main entry point for the user application.

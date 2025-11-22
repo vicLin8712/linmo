@@ -1102,3 +1102,22 @@ void _sched_block(queue_t *wait_q)
     self->state = TASK_BLOCKED;
     _yield();
 }
+
+void _sched_block_mutex(list_t *waiters)
+{
+    if (unlikely(!waiters || !kcb || !kcb->task_current ||
+                 !kcb->task_current->data))
+        panic(ERR_SEM_OPERATION);
+
+    tcb_t *self = kcb->task_current->data;
+
+    /* Remove node from ready queue */
+    sched_dequeue_task(self);
+
+    if (unlikely(!list_pushback(waiters, self)))
+        panic(ERR_SEM_OPERATION);
+
+    /* set blocked state - scheduler will skip blocked tasks */
+    self->state = TASK_BLOCKED;
+    _yield();
+}
