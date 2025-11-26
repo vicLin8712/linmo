@@ -286,7 +286,7 @@ uint64_t mo_uptime(void);
  *
  * @wait_q : The wait queue to which the current task will be added
  */
-void _sched_block(queue_t *wait_q);
+void semaphore_block_atomic(queue_t *wait_q);
 
 /* Atomically blocks the current task and invokes the scheduler.
  *

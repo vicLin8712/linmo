@@ -124,13 +124,13 @@ void mo_sem_wait(sem_t *s)
         panic(ERR_SEM_OPERATION); /* Queue overflow - system error */
     }
 
-    /* Block current task atomically. _sched_block will:
+    /* Block current task atomically. semaphore_block_atomic will:
      * 1. Add current task to wait queue
      * 2. Set task state to BLOCKED
      * 3. Call scheduler without releasing NOSCHED lock
      * The lock is released when we context switch to another task.
      */
-    _sched_block(s->wait_q);
+    semaphore_block_atomic(s->wait_q);
 
     /* When we return here, we have been awakened and acquired the semaphore.
      * The signaling task passed the "token" directly to us without incrementing

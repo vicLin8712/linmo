@@ -1023,7 +1023,7 @@ uint64_t mo_uptime(void)
     return _read_us() / 1000;
 }
 
-void _sched_block(queue_t *wait_q)
+void semaphore_block_atomic(queue_t *wait_q)
 {
     if (unlikely(!wait_q || !kcb || !kcb->task_current ||
                  !kcb->task_current->data))
