@@ -826,8 +826,14 @@ static int32_t task_spawn_impl(void *task_entry,
     tcb->id = kcb->next_tid++;
     kcb->task_count++; /* Cached count of active tasks for quick access */
 
+    /* Binding ready queue node */
+    tcb->rq_node.next = NULL;
+
     if (!kcb->task_current)
-        kcb->task_current = &tcb->global_node;
+        kcb->task_current = &tcb->rq_node;
+
+    /* Push node to ready queue */
+    sched_enqueue_task(tcb);
 
     CRITICAL_LEAVE();
 
@@ -847,7 +853,6 @@ static int32_t task_spawn_impl(void *task_entry,
 
     /* Add to cache and mark ready */
     cache_task(tcb->id, tcb);
-    sched_enqueue_task(tcb);
 
     return tcb->id;
 }
