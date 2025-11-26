@@ -883,7 +883,7 @@ int32_t mo_task_suspend(uint16_t id)
     }
 
     task->state = TASK_SUSPENDED;
-    bool is_current = (kcb->task_current == node);
+    bool is_current = (kcb->task_current->data == task);
 
     CRITICAL_LEAVE();
 
