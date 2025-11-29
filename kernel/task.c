@@ -453,6 +453,23 @@ void sched_wakeup_task(tcb_t *task)
         sched_enqueue_task(task);
 }
 
+/* Dequeue blocked task when mutex lock is triggered */
+void _sched_block_dequeue(tcb_t *blocked_task)
+{
+    if (unlikely(!blocked_task || blocked_task->state != TASK_BLOCKED))
+        return;
+
+    sched_dequeue_task(blocked_task);
+}
+
+void _sched_block_enqueue(tcb_t *blocked_task)
+{
+    if (unlikely(!blocked_task || blocked_task->state != TASK_BLOCKED))
+        return;
+
+    sched_enqueue_task(blocked_task);
+}
+
 /* Efficient Round-Robin Task Selection with O(n) Complexity
  *
  * Selects the next ready task using circular traversal of the master task list.
