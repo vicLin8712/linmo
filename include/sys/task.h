@@ -298,6 +298,10 @@ uint64_t mo_uptime(void);
  */
 void _sched_block(queue_t *wait_q);
 
+/* Dequeue path for task with TASK_BLOCKED state. It must be called before task
+ * state set as TASK_BLOCKED. Currently, this API is used in mutex lock case.*/
+void _sched_block_dequeue(tcb_t *blocked_task);
+
 /* Application Entry Point */
 
 /* The main entry point for the user application.
