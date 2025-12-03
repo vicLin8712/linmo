@@ -237,20 +237,14 @@ int32_t mo_mutex_timedlock(mutex_t *m, uint32_t ticks)
     /* Yield and let the scheduler handle timeout via delay mechanism */
     mo_task_yield();
 
-    /* Check result after waking up */
+    /* Check result after waking up; the task is in TASK_RUNNING and in the
+     * ready queue */
     int32_t result;
 
     NOSCHED_ENTER();
-    if (self->state == TASK_BLOCKED) {
-        /* We woke up due to timeout, not mutex unlock */
-        if (remove_self_from_waiters(m->waiters)) {
-            self->state = TASK_READY;
-            result = ERR_TIMEOUT;
-        } else {
-            /* Race condition: we were both timed out and unlocked */
-            /* Check if we now own the mutex */
-            result = (m->owner_tid == self_tid) ? ERR_OK : ERR_TIMEOUT;
-        }
+    /* If task still in the waiter list, it is woken up due to time out. */
+    if (remove_self_from_waiters(m->waiters)) {
+        result = ERR_TIMEOUT;
     } else {
         /* We were woken by mutex unlock - check ownership */
         result = (m->owner_tid == self_tid) ? ERR_OK : ERR_FAIL;
@@ -453,14 +447,13 @@ int32_t mo_cond_timedwait(cond_t *c, mutex_t *m, uint32_t ticks)
     /* Yield and wait for signal or timeout */
     mo_task_yield();
 
-    /* Determine why we woke up */
+    /* Determine why we woke up; the task is in the TASK_RUNNING state and in
+     * the ready queue. */
     int32_t wait_status;
     NOSCHED_ENTER();
 
-    if (self->state == TASK_BLOCKED) {
-        /* Timeout occurred - remove from wait list */
-        remove_self_from_waiters(c->waiters);
-        self->state = TASK_READY;
+    /* Timeout occurred - remove from wait list */
+    if (remove_self_from_waiters(c->waiters)) {
         self->delay = 0;
         wait_status = ERR_TIMEOUT;
     } else {
