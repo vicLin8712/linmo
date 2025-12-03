@@ -76,6 +76,9 @@ static void mutex_block_atomic(list_t *waiters)
 
     /* Block and yield atomically */
     self->state = TASK_BLOCKED;
+
+    /* Explicit remove list node from the ready queue */
+    _sched_block_dequeue(self);
     _yield(); /* This releases NOSCHED when we context switch */
 }
 
@@ -225,6 +228,7 @@ int32_t mo_mutex_timedlock(mutex_t *m, uint32_t ticks)
     /* Set up timeout using task delay mechanism */
     self->delay = ticks;
     self->state = TASK_BLOCKED;
+    _sched_block_dequeue(self);
 
     NOSCHED_LEAVE();
 
@@ -281,7 +285,7 @@ int32_t mo_mutex_unlock(mutex_t *m)
             /* Validate task state before waking */
             if (likely(next_owner->state == TASK_BLOCKED)) {
                 m->owner_tid = next_owner->id;
-                next_owner->state = TASK_READY;
+                _sched_block_enqueue(next_owner);
                 /* Clear any pending timeout since we're granting ownership */
                 next_owner->delay = 0;
             } else {
@@ -386,6 +390,7 @@ int32_t mo_cond_wait(cond_t *c, mutex_t *m)
         panic(ERR_SEM_OPERATION);
     }
     self->state = TASK_BLOCKED;
+    _sched_block_dequeue(self);
     NOSCHED_LEAVE();
 
     /* Release mutex */
@@ -394,7 +399,7 @@ int32_t mo_cond_wait(cond_t *c, mutex_t *m)
         /* Failed to unlock - remove from wait list and restore state */
         NOSCHED_ENTER();
         remove_self_from_waiters(c->waiters);
-        self->state = TASK_READY;
+        _sched_block_enqueue(self);
         NOSCHED_LEAVE();
         return unlock_result;
     }
@@ -429,6 +434,7 @@ int32_t mo_cond_timedwait(cond_t *c, mutex_t *m, uint32_t ticks)
     }
     self->delay = ticks;
     self->state = TASK_BLOCKED;
+    _sched_block_dequeue(self);
     NOSCHED_LEAVE();
 
     /* Release mutex */
@@ -437,7 +443,7 @@ int32_t mo_cond_timedwait(cond_t *c, mutex_t *m, uint32_t ticks)
         /* Failed to unlock - cleanup and restore */
         NOSCHED_ENTER();
         remove_self_from_waiters(c->waiters);
-        self->state = TASK_READY;
+        _sched_block_enqueue(self);
         self->delay = 0;
         NOSCHED_LEAVE();
         return unlock_result;
@@ -482,7 +488,7 @@ int32_t mo_cond_signal(cond_t *c)
         if (likely(waiter)) {
             /* Validate task state before waking */
             if (likely(waiter->state == TASK_BLOCKED)) {
-                waiter->state = TASK_READY;
+                _sched_block_enqueue(waiter);
                 /* Clear any pending timeout since we're signaling */
                 waiter->delay = 0;
             } else {
@@ -509,7 +515,7 @@ int32_t mo_cond_broadcast(cond_t *c)
         if (likely(waiter)) {
             /* Validate task state before waking */
             if (likely(waiter->state == TASK_BLOCKED)) {
-                waiter->state = TASK_READY;
+                _sched_block_enqueue(waiter);
                 /* Clear any pending timeout since we're broadcasting */
                 waiter->delay = 0;
             } else {
