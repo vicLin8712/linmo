@@ -251,7 +251,9 @@ void _timer_tick_handler(void)
 
         /* Handle auto-reload timers */
         if (t->mode == TIMER_AUTORELOAD) {
-            t->deadline_ticks = now + MS_TO_TICKS(t->period_ms);
+            /* Calculate next expected fire tick to prevent cumulative error */
+            t->last_expected_fire_tick += MS_TO_TICKS(t->period_ms);
+            t->deadline_ticks = t->last_expected_fire_tick;
             timer_sorted_insert(t); /* Re-insert for next expiration */
         } else {
             t->mode = TIMER_DISABLED; /* One-shot timers are done */
@@ -305,6 +307,7 @@ int32_t mo_timer_create(void *(*callback)(void *arg),
     t->arg = arg;
     t->period_ms = period_ms;
     t->deadline_ticks = 0;
+    t->last_expected_fire_tick = 0;
     t->mode = TIMER_DISABLED;
     t->_reserved = 0;
 
@@ -387,7 +390,8 @@ int32_t mo_timer_start(uint16_t id, uint8_t mode)
 
     /* Configure and start timer */
     t->mode = mode;
-    t->deadline_ticks = mo_ticks() + MS_TO_TICKS(t->period_ms);
+    t->last_expected_fire_tick = mo_ticks() + MS_TO_TICKS(t->period_ms);
+    t->deadline_ticks = t->last_expected_fire_tick;
 
     if (unlikely(timer_sorted_insert(t) != ERR_OK)) {
         t->mode = TIMER_DISABLED;

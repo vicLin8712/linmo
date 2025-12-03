@@ -26,7 +26,10 @@ typedef enum {
 typedef struct {
     /* Timing Parameters */
     uint32_t deadline_ticks; /* Expiration time in absolute system ticks */
-    uint32_t period_ms;      /* Reload period in milliseconds */
+    uint32_t last_expected_fire_tick; /* Last calculated expected fire time for
+                                       * periodic timer
+                                       */
+    uint32_t period_ms;               /* Reload period in milliseconds */
 
     /* Timer Identification and State */
     uint16_t id;       /* Unique handle assigned by the kernel */
