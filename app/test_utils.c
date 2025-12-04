@@ -1,10 +1,12 @@
-/* LibC Test Suite - Comprehensive tests for standard library functions.
+/* Utility Test Suite - Comprehensive tests for utilities and helpers.
  *
  * Current Coverage:
  * - vsnprintf/snprintf: Buffer overflow protection
  *   * C99 semantics, truncation behavior, ISR safety
  *   * Format specifiers: %s, %d, %u, %x, %p, %c, %%
  *   * Edge cases: size=0, size=1, truncation, null termination
+ *
+ * - list operations: pushback node, remove node
  *
  * Future Tests (Planned):
  * - String functions: strlen, strcmp, strcpy, strncpy, memcpy, memset
@@ -298,6 +300,51 @@ void test_mixed_formats(void)
     ASSERT_TEST(buf[test_strlen(buf)] == '\0', "Mixed format null termination");
 }
 
+/* Test 11: List node helpers behavior */
+void test_list_node_pushback_and_remove(void)
+{
+    list_node_t node1 = {0};
+    list_node_t node2 = {0};
+
+    node1.next = &node2; /* make node1 artificially “linked” */
+    list_t *list = list_create();
+
+    /* Check node push back normally - unlinked and linked */
+    list_pushback_node(list, &node1);
+    ASSERT_TEST(list_is_empty(list), "Linked node pushback fail");
+
+    node1.next = NULL;
+    list_pushback_node(list, &node1);
+    ASSERT_TEST(list->length == 1, "Unlinked node pushback success ");
+    ASSERT_TEST(list->head->next == &node1 && node1.next == list->tail,
+                "List consistent after pushback first node ");
+
+    /* Check node push back order */
+    node2.next = NULL;
+    list_pushback_node(list, &node2);
+    ASSERT_TEST(list->length == 2 && list->head->next == &node1 &&
+                    node1.next == &node2 && node2.next == list->tail,
+                "Insertion order preserved ");
+
+    /* Remove last node */
+    list_remove_node(list, &node2);
+    ASSERT_TEST(
+        list->length == 1 && node2.next == NULL && node1.next == list->tail,
+        "Removing last node must keep list structure consistent");
+
+    /* Remove non-existing node (second time) */
+    list_remove_node(list, &node2);
+    ASSERT_TEST(
+        list->length == 1 && node2.next == NULL && node1.next == list->tail,
+        "Removing non-existing node must not change the list");
+
+    /* Remove only node */
+    list_remove_node(list, &node1);
+    ASSERT_TEST(list->length == 0 && list->head->next == list->tail,
+                "Removing only node ");
+    ASSERT_TEST(list_is_empty(list), "Empty list check ");
+}
+
 void test_runner(void)
 {
     printf("\n=== LibC Test Suite ===\n");
@@ -313,6 +360,10 @@ void test_runner(void)
     test_buffer_boundaries();
     test_isr_safety();
     test_mixed_formats();
+
+
+    printf("\n=== List Test Suite ===\n");
+    test_list_node_pushback_and_remove();
 
     printf("\n=== Test Summary ===\n");
     printf("Tests run:    %d\n", tests_run);
