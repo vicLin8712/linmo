@@ -106,15 +106,9 @@ static inline list_node_t *list_pushback(list_t *list, void *data)
         return NULL;
 
     node->data = data;
-    node->next = list->tail;
+    node->next = NULL;
 
-    /* Insert before tail sentinel */
-    list_node_t *prev = list->head;
-    while (prev->next != list->tail)
-        prev = prev->next;
-    prev->next = node;
-
-    list->length++;
+    list_pushback_node(list, node);
     return node;
 }
 
@@ -157,17 +151,10 @@ static inline void *list_remove(list_t *list, list_node_t *target)
     if (unlikely(!list || !target || list_is_empty(list)))
         return NULL;
 
-    list_node_t *prev = list->head;
-    while (prev->next != list->tail && prev->next != target)
-        prev = prev->next;
+    list_remove_node(list, target);
 
-    if (unlikely(prev->next != target))
-        return NULL; /* node not found */
-
-    prev->next = target->next;
     void *data = target->data;
     free(target);
-    list->length--;
     return data;
 }
 
