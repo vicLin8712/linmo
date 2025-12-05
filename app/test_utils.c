@@ -345,6 +345,36 @@ void test_list_node_pushback_and_remove(void)
     ASSERT_TEST(list_is_empty(list), "Empty list check ");
 }
 
+/* Test 12: List helpers behavior */
+void test_list_pushback_and_remove(void)
+{
+    list_t *list = list_create();
+
+    int node1 = 1;
+    int node2 = 2;
+
+    /* Check node push back normally - unlinked and linked */
+    list_pushback(list, &node1);
+    ASSERT_TEST(list->length == 1 && *(int *) (list->head->next->data) == 1,
+                "Data push back into a new list ");
+
+    list_pushback(list, &node2);
+    ASSERT_TEST(
+        list->length == 2 && *(int *) (list->head->next->next->data) == 2,
+        "Second data pushback successful ");
+
+    /* Remove last node */
+    list_remove(list, list->head->next);
+    ASSERT_TEST(list->length == 1 && *(int *) (list->head->next->data) == 2,
+                "Remove first data ");
+
+    /* Remove non-existing node (second time) */
+    list_remove(list, list->head->next);
+    ASSERT_TEST(list->length == 0, "Unlinked node pushback success ");
+
+    ASSERT_TEST(list_is_empty(list), "Empty list check ");
+}
+
 void test_runner(void)
 {
     printf("\n=== LibC Test Suite ===\n");
@@ -364,6 +394,7 @@ void test_runner(void)
 
     printf("\n=== List Test Suite ===\n");
     test_list_node_pushback_and_remove();
+    test_list_pushback_and_remove();
 
     printf("\n=== Test Summary ===\n");
     printf("Tests run:    %d\n", tests_run);
