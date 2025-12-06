@@ -16,10 +16,10 @@
 #include "private/error.h"
 #include "private/utils.h"
 
-/* Pre-allocated node pool for reduced malloc/free overhead */
+/* Pre-allocated timer pool for reduced malloc/free overhead */
 #define TIMER_NODE_POOL_SIZE 16
-static list_node_t timer_node_pool[TIMER_NODE_POOL_SIZE];
-static uint16_t pool_free_mask = 0xFFFF; /* Bitmask for free nodes */
+static timer_t timer_pool[TIMER_NODE_POOL_SIZE];
+static uint16_t pool_free_mask = 0xFFFF; /* Bitmask for free timers */
 
 /* Master list of all created timers, kept sorted by ID for faster lookup */
 static list_t *all_timers_list = NULL;
@@ -105,10 +105,10 @@ static int32_t timer_subsystem_init(void)
         return ERR_FAIL;
     }
 
-    /* Initialize node pool */
+    /* Initialize timer pool */
+
     for (int i = 0; i < TIMER_NODE_POOL_SIZE; i++) {
-        timer_node_pool[i].data = NULL;
-        timer_node_pool[i].next = NULL;
+        memset(&timer_pool[i], 0, sizeof(timer_t));
     }
 
     timer_initialized = true;
