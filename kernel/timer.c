@@ -201,22 +201,21 @@ void _timer_tick_handler(void)
     if (unlikely(!timer_initialized || !kcb->timer_list ||
                  list_is_empty(kcb->timer_list)))
         return;
-
     uint32_t now = mo_ticks();
-    timer_t *expired_timers[TIMER_BATCH_SIZE]; /* Smaller batch size */
+    list_node_t *
+        expired_timers_running_nodes[TIMER_BATCH_SIZE]; /* Smaller batch size */
     int expired_count = 0;
 
     /* Collect expired timers in one pass, limited to batch size */
     while (!list_is_empty(kcb->timer_list) &&
            expired_count < TIMER_BATCH_SIZE) {
         list_node_t *node = kcb->timer_list->head->next;
-        timer_t *t = (timer_t *) node->data;
+        timer_t *t = timer_from_running_node(node);
 
         if (now >= t->deadline_ticks) {
-            expired_timers[expired_count++] = t;
-            kcb->timer_list->head->next = node->next;
-            kcb->timer_list->length--;
-            return_timer_node(node);
+            expired_timers_running_nodes[expired_count++] =
+                list_pop(kcb->timer_list);
+
         } else {
             /* First timer not expired, so none further down are */
             break;
@@ -225,7 +224,8 @@ void _timer_tick_handler(void)
 
     /* Process all expired timers */
     for (int i = 0; i < expired_count; i++) {
-        timer_t *t = expired_timers[i];
+        list_node_t *expired_running_node = expired_timers_running_nodes[i];
+        timer_t *t = timer_from_running_node(expired_running_node);
 
         /* Execute callback */
         if (likely(t->callback))
@@ -236,7 +236,8 @@ void _timer_tick_handler(void)
             /* Calculate next expected fire tick to prevent cumulative error */
             t->last_expected_fire_tick += MS_TO_TICKS(t->period_ms);
             t->deadline_ticks = t->last_expected_fire_tick;
-            timer_sorted_insert(t); /* Re-insert for next expiration */
+            /* Re-insert for next expiration */
+            timer_sorted_insert_running_list(t);
         } else {
             t->mode = TIMER_DISABLED; /* One-shot timers are done */
         }
