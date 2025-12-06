@@ -275,8 +275,9 @@ int32_t mo_timer_create(void *(*callback)(void *arg),
     if (unlikely(timer_subsystem_init() != ERR_OK))
         return ERR_FAIL;
 
-    timer_t *t = malloc(sizeof(timer_t));
-    if (unlikely(!t))
+    /* Try to get a static timer from the pool */
+    timer_t *t = get_timer();
+    if (!t)
         return ERR_FAIL;
 
     NOSCHED_ENTER();
@@ -290,13 +291,11 @@ int32_t mo_timer_create(void *(*callback)(void *arg),
     t->last_expected_fire_tick = 0;
     t->mode = TIMER_DISABLED;
     t->_reserved = 0;
+    t->t_node.next = NULL;
+    t->t_running_node.next = NULL;
 
     /* Insert into sorted all_timers_list */
-    if (unlikely(timer_insert_sorted_by_id(t) != ERR_OK)) {
-        NOSCHED_LEAVE();
-        free(t);
-        return ERR_FAIL;
-    }
+    timer_insert_sorted_timer_list(t);
 
     /* Add to cache */
     cache_timer(t->id, t);
@@ -318,11 +317,11 @@ int32_t mo_timer_destroy(uint16_t id)
         return ERR_FAIL;
     }
 
-    timer_t *t = (timer_t *) node->data;
+    timer_t *t = timer_from_node(node);
 
     /* Remove from active list if running */
     if (t->mode != TIMER_DISABLED)
-        timer_remove_item_by_data(kcb->timer_list, t);
+        timer_remove_from_running_list(kcb->timer_list, t);
 
     /* Remove from cache */
     for (int i = 0; i < 4; i++) {
@@ -342,9 +341,7 @@ int32_t mo_timer_destroy(uint16_t id)
         all_timers_list->length--;
     }
 
-    free(t);
-    return_timer_node(node);
-
+    return_timer(t);
     NOSCHED_LEAVE();
     return ERR_OK;
 }
@@ -366,18 +363,14 @@ int32_t mo_timer_start(uint16_t id, uint8_t mode)
 
     /* Remove from active list if already running */
     if (t->mode != TIMER_DISABLED)
-        timer_remove_item_by_data(kcb->timer_list, t);
+        timer_remove_from_running_list(kcb->timer_list, t);
 
     /* Configure and start timer */
     t->mode = mode;
     t->last_expected_fire_tick = mo_ticks() + MS_TO_TICKS(t->period_ms);
     t->deadline_ticks = t->last_expected_fire_tick;
 
-    if (unlikely(timer_sorted_insert(t) != ERR_OK)) {
-        t->mode = TIMER_DISABLED;
-        NOSCHED_LEAVE();
-        return ERR_FAIL;
-    }
+    timer_sorted_insert_running_list(t);
 
     NOSCHED_LEAVE();
     return ERR_OK;
@@ -396,7 +389,7 @@ int32_t mo_timer_cancel(uint16_t id)
         return ERR_FAIL;
     }
 
-    timer_remove_item_by_data(kcb->timer_list, t);
+    timer_remove_from_running_list(kcb->timer_list, t);
     t->mode = TIMER_DISABLED;
 
     NOSCHED_LEAVE();
