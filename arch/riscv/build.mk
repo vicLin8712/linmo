@@ -34,7 +34,7 @@ ARCH_FLAGS = -march=rv32imzicsr -mabi=ilp32
 
 # Common compiler flags
 CFLAGS += -Wall -Wextra -Werror -Wshadow -Wno-unused-parameter
-CFLAGS += -O2 -std=gnu99
+CFLAGS += -O0 -g -std=gnu99
 CFLAGS += $(ARCH_FLAGS)
 CFLAGS += -mstrict-align -ffreestanding -nostdlib -fomit-frame-pointer
 CFLAGS += $(INC_DIRS) $(DEFINES) -fdata-sections -ffunction-sections

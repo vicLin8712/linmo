@@ -112,4 +112,9 @@ distclean: clean
 	$(Q)find '$(BUILD_DIR)' -type f -name '*.a' -delete 2>/dev/null || true
 	$(Q)rm -rf '$(BUILD_DIR)' 2>/dev/null || true
 
+debug:
+	qemu-system-riscv32 -machine virt -nographic -bios none \
+    -kernel build/image.elf -S -gdb tcp::1234
+
+
 -include $(deps)
