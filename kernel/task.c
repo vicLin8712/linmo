@@ -387,16 +387,37 @@ static void sched_enqueue_task(tcb_t *task)
     return;
 }
 
-/* Remove task from ready queues - state-based approach for compatibility */
+/* Remove task from ready queue */
 void sched_dequeue_task(tcb_t *task)
 {
     if (unlikely(!task))
         return;
 
-    /* For tasks that need to be removed from ready state (suspended/cancelled),
-     * we rely on the state change. The scheduler will skip non-ready tasks
-     * when it encounters them during the round-robin traversal.
-     */
+    uint8_t prio_level = task->prio_level;
+
+    /* For task that need to be removed from ready/running state, it need be
+     * removed from corresponding ready queue. */
+    list_t *rq = kcb->ready_queues[prio_level];
+    if (unlikely(!rq))
+        return;
+
+    list_node_t **cursor = &kcb->rr_cursors[prio_level];
+    if (unlikely(!*cursor))
+        return;
+
+    /* Safely move cursor to next task node. */
+    if (&task->rq_node == *cursor)
+        *cursor = list_cnext(rq, *cursor);
+
+    /* Remove ready queue node */
+    list_remove(rq, &task->rq_node);
+
+    /* Update task count in ready queue */
+    if (rq->length == 0) {
+        *cursor = NULL;
+        kcb->ready_bitmap &= ~(1U << (task->prio_level));
+    }
+    return;
 }
 
 /* Handle time slice expiration for current task */
