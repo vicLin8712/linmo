@@ -151,7 +151,7 @@ static void task_stack_check(void)
     if (unlikely(!kcb || !kcb->task_current))
         panic(ERR_STACK_CHECK);
 
-    tcb_t *self = tcb_from_global_node(kcb->task_current);
+    tcb_t *self = tcb_from_rq_node(kcb->task_current);
     if (unlikely(!is_valid_task(self)))
         panic(ERR_STACK_CHECK);
 
@@ -426,7 +426,7 @@ void sched_tick_current_task(void)
     if (unlikely(!kcb->task_current))
         return;
 
-    tcb_t *current_task = tcb_from_global_node(kcb->task_current);
+    tcb_t *current_task = tcb_from_rq_node(kcb->task_current);
 
     /* Decrement time slice */
     if (current_task->time_slice > 0)
@@ -489,7 +489,7 @@ uint16_t sched_select_next_task(void)
     if (unlikely(!kcb->task_current))
         panic(ERR_NO_TASKS);
 
-    tcb_t *current_task = tcb_from_global_node(kcb->task_current);
+    tcb_t *current_task = tcb_from_rq_node(kcb->task_current);
 
     /* Mark current task as ready if it was running */
     if (current_task->state == TASK_RUNNING)
@@ -522,7 +522,7 @@ uint16_t sched_select_next_task(void)
     *cursor = list_cnext(rq, *cursor);
 
     /* Update new task properties */
-    tcb_t *new_task = tcb_from_global_node(kcb->task_current);
+    tcb_t *new_task = tcb_from_rq_node(kcb->task_current);
     new_task->time_slice = get_priority_timeslice(new_task->prio_level);
     new_task->state = TASK_RUNNING;
 
@@ -572,7 +572,7 @@ void dispatch(void)
     if (!kcb->preemptive) {
         /* Cooperative mode: use setjmp/longjmp mechanism */
         if (hal_context_save(
-                tcb_from_global_node(kcb->task_current)->context) != 0)
+                tcb_from_rq_node(kcb->task_current)->context) != 0)
             return;
     }
 
@@ -594,7 +594,7 @@ void dispatch(void)
     }
 
     /* Hook for real-time scheduler - if it selects a task, use it */
-    tcb_t *prev_task = tcb_from_global_node(kcb->task_current);
+    tcb_t *prev_task = tcb_from_rq_node(kcb->task_current);
     int32_t rt_task_id = kcb->rt_sched();
 
     if (rt_task_id < 0) {
@@ -605,14 +605,14 @@ void dispatch(void)
         if (rt_node) {
             tcb_t *rt_task = tcb_from_global_node(rt_node);
             /* Different task - perform context switch */
-            if (rt_node != kcb->task_current) {
+            if (rt_task!= tcb_from_rq_node(kcb->task_current)) {
                 if (kcb->task_current) {
-                    tcb_t *prev = tcb_from_global_node(kcb->task_current);
+                    tcb_t *prev = tcb_from_rq_node(kcb->task_current);
                     if (prev->state == TASK_RUNNING)
                         prev->state = TASK_READY;
                 }
                 /* Switch to RT task */
-                kcb->task_current = rt_node;
+                kcb->task_current = &rt_task->rq_node;
                 rt_task->state = TASK_RUNNING;
                 rt_task->time_slice =
                     get_priority_timeslice(rt_task->prio_level);
@@ -626,7 +626,7 @@ void dispatch(void)
     }
 
     /* Check if we're still on the same task (no actual switch needed) */
-    tcb_t *next_task = tcb_from_global_node(kcb->task_current);
+    tcb_t *next_task = tcb_from_rq_node(kcb->task_current);
 
     /* In preemptive mode, if selected task has pending delay, keep trying to
      * find ready task. We check delay > 0 instead of state == BLOCKED because
@@ -704,7 +704,7 @@ void yield(void)
     }
 
     /* Cooperative mode: use setjmp/longjmp mechanism */
-    if (hal_context_save(tcb_from_global_node(kcb->task_current)->context) != 0)
+    if (hal_context_save(tcb_from_rq_node(kcb->task_current)->context) != 0)
         return;
 
 #if CONFIG_STACK_PROTECTION
@@ -715,7 +715,7 @@ void yield(void)
     list_foreach(kcb->tasks, delay_update, NULL);
 
     sched_select_next_task(); /* Use O(1) priority scheduler */
-    hal_context_restore(tcb_from_global_node(kcb->task_current)->context, 1);
+    hal_context_restore(tcb_from_rq_node(kcb->task_current)->context, 1);
 }
 
 /* Stack initialization with minimal overhead */
@@ -913,7 +913,7 @@ void mo_task_delay(uint16_t ticks)
         return;
     }
 
-    tcb_t *self = tcb_from_global_node(kcb->task_current);
+    tcb_t *self = tcb_from_rq_node(kcb->task_current);
 
     /* Set delay and blocked state, dequeue from ready queue */
     sched_dequeue_task(self);
@@ -1057,7 +1057,7 @@ uint16_t mo_task_id(void)
 {
     if (unlikely(!kcb || !kcb->task_current))
         return 0;
-    return tcb_from_global_node(kcb->task_current)->id;
+    return tcb_from_rq_node(kcb->task_current)->id;
 }
 
 int32_t mo_task_idref(void *task_entry)
@@ -1115,7 +1115,7 @@ void _sched_block(queue_t *wait_q)
     /* Process deferred timer work before blocking */
     process_deferred_timer_work();
 
-    tcb_t *self = tcb_from_global_node(kcb->task_current);
+    tcb_t *self = tcb_from_rq_node(kcb->task_current);
 
     /* Remove node from ready queue */
     sched_dequeue_task(self);

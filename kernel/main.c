@@ -63,7 +63,7 @@ int32_t main(void)
      * 'kcb->task_current' was set by the first call to mo_task_spawn.
      * This function transfers control and does not return.
      */
-    tcb_t *first_task = tcb_from_global_node(kcb->task_current);
+    tcb_t *first_task = tcb_from_rq_node(kcb->task_current);
     if (!first_task)
         panic(ERR_NO_TASKS);
 
